@@ -6,7 +6,11 @@ from app.config import settings
 
 SQLALCHEMY_DATABASE_URL = settings.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
-engine = create_async_engine(SQLALCHEMY_DATABASE_URL)
+engine = create_async_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,  # Tests connection liveness before checking out from pool
+    pool_recycle=300,    # Recreates connections older than 5 minutes
+)
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
 

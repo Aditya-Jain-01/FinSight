@@ -36,9 +36,10 @@ async def upload_document(
                 title=resolved_title,
                 source="upload",
             )
-            await session.commit()
+            # ingest_document commits internally per batch — no extra commit needed
         except Exception as e:
-            await session.rollback()
+            # Note: partial progress (already-committed batches) is intentionally preserved.
+            # The document will have status='error' or 'partial' and can be re-ingested.
             raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}") from e
 
     return UploadDocumentResponse(

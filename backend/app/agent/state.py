@@ -8,3 +8,4 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     tool_trace: list[dict]
     ui_blocks: list[dict]
+    provider_meta: dict  # {"provider": str, "model": str, "fallback_used": bool}

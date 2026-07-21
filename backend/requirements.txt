@@ -9,6 +9,9 @@ langgraph
 langgraph-checkpoint-postgres
 langchain
 langchain-google-genai
+langchain-groq
+langchain-huggingface
+huggingface_hub
 langchain-core
 langchain-text-splitters
 yfinance

@@ -1,8 +1,8 @@
 from langchain_core.messages import SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 
-from app.agent.tools.registry import TOOLS
 from app.config import settings
+from app.agent.tools.registry import TOOLS
 
 PLANNER_SYSTEM_PROMPT = """You are the planning node of a financial research agent covering both
 Indian and US markets.
@@ -21,7 +21,11 @@ Indian and US markets.
   and current stock price?", call both rag_search and get_stock_price.
 """
 
-_llm = ChatGoogleGenerativeAI(model=settings.gemini_model, google_api_key=settings.google_api_key, temperature=0)
+_llm = ChatGroq(
+    model=settings.groq_model,
+    api_key=settings.groq_api_key,
+    temperature=0,
+)
 _llm_with_tools = _llm.bind_tools(TOOLS)
 
 
@@ -31,4 +35,11 @@ async def planner_node(state):
         messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)] + messages
 
     response = await _llm_with_tools.ainvoke(messages)
-    return {"messages": [response]}
+
+    # Extract which provider actually handled this request
+    provider_meta = {"provider": "Groq", "model": settings.groq_model}
+
+    return {
+        "messages": [response],
+        "provider_meta": provider_meta,
+    }

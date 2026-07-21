@@ -1,5 +1,5 @@
 from langchain_core.messages import SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 
 from app.config import settings
 
@@ -15,14 +15,22 @@ Write a clear, concise answer using the tool results already in the conversation
 - Never mention charts, visuals, rendering, or interface limitations of any kind. Do not say what you "cannot" do. Just describe the financial data itself. Assume any relevant chart, card, or citation is already being shown to the user alongside your text.
 """
 
-_llm = ChatGoogleGenerativeAI(model=settings.gemini_model, google_api_key=settings.google_api_key, temperature=0.3)
+_llm = ChatGroq(
+    model=settings.groq_model,
+    api_key=settings.groq_api_key,
+    temperature=0.3,
+)
 
 
 async def responder_node(state):
     messages = [SystemMessage(content=RESPONDER_SYSTEM_PROMPT)] + list(state["messages"])
     response = await _llm.ainvoke(messages)
     ui_blocks = _build_ui_blocks(state.get("tool_trace", []))
-    return {"messages": [response], "ui_blocks": ui_blocks}
+
+    # Merge provider metadata from planner (if available) with responder info
+    provider_meta = state.get("provider_meta") or {"provider": "Groq", "model": settings.groq_model}
+
+    return {"messages": [response], "ui_blocks": ui_blocks, "provider_meta": provider_meta}
 
 
 def _build_ui_blocks(tool_trace: list[dict]) -> list[dict]:

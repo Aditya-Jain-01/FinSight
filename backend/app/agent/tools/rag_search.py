@@ -1,7 +1,7 @@
 """RAG search tool: embed the query → cosine similarity over document_chunks → return top-k with citations."""
 
 from langchain_core.tools import tool
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,10 +9,9 @@ from app.config import settings
 from app.database import async_session_maker
 from app.models.document import Document, DocumentChunk
 
-_embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
-    google_api_key=settings.google_api_key,
-    output_dimensionality=768,
+_embeddings = HuggingFaceEndpointEmbeddings(
+    huggingfacehub_api_token=settings.huggingface_api_key,
+    model="BAAI/bge-base-en-v1.5",
 )
 
 
@@ -53,6 +52,7 @@ async def rag_search(query: str, ticker: str | None = None, top_k: int = 3) -> d
                     FROM document_chunks dc
                     JOIN documents d ON dc.document_id = d.id
                     WHERE d.ticker = :ticker
+                      AND d.status IN ('ready', 'partial')
                     ORDER BY dc.embedding <=> CAST(:embedding AS vector)
                     LIMIT :top_k
                 """),
@@ -75,6 +75,7 @@ async def rag_search(query: str, ticker: str | None = None, top_k: int = 3) -> d
                         1 - (dc.embedding <=> CAST(:embedding AS vector)) AS similarity
                     FROM document_chunks dc
                     JOIN documents d ON dc.document_id = d.id
+                    WHERE d.status IN ('ready', 'partial')
                     ORDER BY dc.embedding <=> CAST(:embedding AS vector)
                     LIMIT :top_k
                 """),

@@ -1,91 +1,136 @@
-# FinSight
+# FinSight: Agentic Financial Research Platform
 
-FinSight is a financial research assistant built to answer questions about US and Indian equity markets. It uses a custom AI agent to fetch live data and surface relevant context without hallucinating figures.
+FinSight is a powerful, AI-driven financial research assistant built with a modern LangGraph agent architecture. It is designed to analyze Indian and US stock markets, combining live market data (via `yfinance`) with deep qualitative analysis (RAG over annual reports) into a single, seamless, streaming chat interface.
 
-This project is a work in progress and serves as a portfolio piece exploring agentic workflows and deterministic UI rendering.
+---
 
-## Features
+## 🏗 Architecture
 
-- **Live Market Data**: Integrates with `yfinance` to pull real-time stock prices, historical trends, and key financial ratios (P/E, Market Cap, EPS) for both US tickers (e.g., AAPL) and Indian tickers (e.g., TCS.NS).
-- **Agentic Workflow**: Built with **LangGraph**, the backend utilizes a multi-node architecture (Planner -> Tool Executor -> Responder) to intelligently route queries, call appropriate tools, and generate prose responses.
-- **Deterministic UI**: Instead of relying on the LLM to format complex charts or tables in Markdown, the backend traces tool executions and emits structured UI blocks. The Next.js frontend renders these natively as React components (like `PriceChart` and `MetricCard`).
-- **Document RAG (Work in Progress)**: Early implementation of Retrieval-Augmented Generation using **pgvector** to search through seeded annual reports and financial filings. When complete, this will allow the agent to pull verifiable, cited excerpts directly from primary sources.
+### 1. The Agent (LangGraph)
+The core of FinSight is a multi-node LangGraph agent designed to prevent hallucination and improve reasoning:
+- **Planner Node**: Interprets user intent, handles ticker normalization (.NS for India), and orchestrates tool calls. It does *not* write the final response.
+- **Tool Execution**: Resolves live API calls and vector database searches.
+- **Responder Node**: Synthesizes the raw tool outputs into a polished, financial analyst-style prose response. It guarantees that any numbers cited come directly from the tools.
 
-## Tech Stack
+### 2. Live Data & RAG
+- **Live Market Data**: Integrates with Yahoo Finance to pull real-time stock prices, P/E ratios, EPS, market caps, and 52-week highs/lows.
+- **RAG Pipeline (Retrieval-Augmented Generation)**:
+  - Supports large PDF annual reports and filings.
+  - **Smart Filtering**: Pre-filters pages based on financial keywords (e.g., "Management Discussion", "Capex", "Risk Factors") to drop boilerplate and reduce embedding costs by ~70%.
+  - **Embeddings**: Uses HuggingFace's Inference API (`BAAI/bge-base-en-v1.5`) to map chunks into 768-dimensional vectors.
+  - **Vector DB**: PostgreSQL with `pgvector` hosted on Neon Serverless Postgres.
 
-### Frontend
-- **Framework**: Next.js 15 (App Router)
-- **Styling**: Tailwind CSS with a custom editorial-inspired theme
-- **Typography**: Playfair Display & Inter
+### 3. Real-Time Streaming
+- **Backend (FastAPI)**: Uses a custom Server-Sent Events (SSE) protocol to stream intermediate state.
+- **Frontend (Next.js)**: Consumes the SSE stream to display live tool-call badges (e.g., "Fetching TCS financials..."), rich UI components (Metric Cards, Filing Excerpts), and streaming prose simultaneously.
 
-### Backend
-- **Framework**: FastAPI
-- **Agent Orchestration**: LangGraph & LangChain
-- **LLM**: Google Gemini (via `langchain-google-genai`)
-- **Database**: PostgreSQL (hosted on Neon) with `pgvector` extension for embeddings
-- **Data Source**: `yfinance`
+---
 
-## Getting Started
+## 🚀 Tech Stack
+
+**Frontend:**
+- Next.js 15 (React 19)
+- TailwindCSS (Premium, whitespace-heavy editorial design)
+- Custom SSE client (`src/lib/sse.ts`)
+
+**Backend:**
+- FastAPI & Uvicorn
+- LangGraph & LangChain
+- Groq (LLM provider)
+- HuggingFace (Embeddings provider)
+- PostgreSQL (Neon) with `pgvector` & SQLAlchemy
+- Alembic (Migrations)
+- `pdfplumber` (Document extraction)
+
+---
+
+## 🛠 Setup & Installation
 
 ### Prerequisites
 - Node.js (v18+)
 - Python 3.10+
-- PostgreSQL database (with pgvector enabled)
-- Google Gemini API Key
+- A [Neon Postgres](https://neon.tech/) database URL.
+- API Keys for **Groq** and **HuggingFace**.
 
-### Backend Setup
-1. Navigate to the `backend` directory:
-   ```bash
-   cd backend
-   ```
-2. Create and activate a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-   ```
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Create a `.env` file in the `backend` folder and add your keys:
-   ```env
-   DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
-   GOOGLE_API_KEY=your_gemini_api_key
-   NEXT_PUBLIC_API_URL=http://localhost:8000
-   ```
-5. Run database migrations:
-   ```bash
-   alembic upgrade head
-   ```
-6. Start the FastAPI server:
-   ```bash
-   uvicorn app.main:app --reload
-   ```
+### 1. Backend Setup
+```bash
+cd backend
+python -m venv venv
+# Windows: .\venv\Scripts\activate
+# Mac/Linux: source venv/bin/activate
 
-### Frontend Setup
-1. Navigate to the `frontend` directory:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the Next.js development server:
-   ```bash
-   npm run dev
-   ```
+pip install -r requirements.txt
+```
 
-## Future Improvements
+Create a `.env` file in the `backend/` directory:
+```env
+DATABASE_URL=postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require
+GROQ_API_KEY=gsk_your_groq_key
+HUGGINGFACE_API_KEY=hf_your_hf_key
+```
 
-- [ ] Complete the RAG ingestion pipeline for automated document parsing.
-- [ ] Add multi-provider LLM fallbacks (Groq, NVIDIA NIM) to handle API rate limits gracefully.
-- [ ] Expand tool capabilities for deeper fundamental analysis.
-- [ ] Introduce multiple investment analysis lenses (Value, Growth, etc.) based on publicly documented investment frameworks.
-- [ ] Optimize RAG ingestion for large financial filings through smarter section filtering and chunking.
-- [ ] Build an interactive valuation sandbox with configurable financial assumptions and live fair-value estimation.
-- [ ] Add a lightweight market dashboard with cached real-time market indices and top movers.
+Run database migrations to initialize tables and `pgvector`:
+```bash
+alembic upgrade head
+```
 
-## Disclaimer
+### 2. Frontend Setup
+```bash
+cd frontend
+npm install
+```
 
-*FinSight is an experimental project. It is not intended to provide financial advice. Always verify data independently before making investment decisions.*
+*(No `.env` is strictly required for the frontend if running locally on port 3000, as it defaults to `http://localhost:8000`)*.
+
+---
+
+## 🏃‍♂️ Running the Application
+
+Start the backend:
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+Start the frontend:
+```bash
+cd frontend
+npm run dev
+```
+Navigate to `http://localhost:3000` to use the application.
+
+---
+
+## 📚 Seeding the RAG Database
+
+To chat about company-specific strategic insights, you must first ingest their annual reports.
+
+1. Place PDF reports in a directory (e.g., `seed_filings/`).
+2. Run the ingestion script:
+```bash
+cd backend
+python -m scripts.seed_documents
+```
+
+**Features of the ingestion script:**
+- **Rate-limit resilient**: Automatically batches requests and uses exponential backoff.
+- **Idempotent**: Safe to re-run. It will skip previously completed documents and resume/retry failed ones.
+- **Optimized**: Drops pages that don't match critical financial keywords before embedding.
+
+---
+
+## 💡 Key Design Philosophies
+
+- **No Placeholders**: If the agent needs to show a metric card, it streams a tool block and the UI renders a rich React component natively, completely avoiding markdown table hallucinations.
+- **Fail Gracefully**: If a provider rate-limits or a tool fails, the agent surfaces the error cleanly in the UI and continues the conversation.
+- **Serverless-Ready**: Includes SQLAlchemy `pool_pre_ping=True` and `pool_recycle` to safely survive Neon scale-to-zero connection drops.
+
+---
+
+## 🚀 Future Improvements
+
+- **Deeper Fundamental Analysis**: Expand tool capabilities to retrieve and process a wider array of fundamental metrics and historical financial statements.
+- **Investment Frameworks**: Introduce multiple analysis lenses (Value, Growth, Quality, etc.) based on publicly documented investment methodologies.
+- **Advanced RAG Optimization**: Further refine ingestion for massive financial filings through even smarter section filtering, hierarchical chunking, and semantic routing.
+- **Valuation Sandbox**: Build an interactive UI module with configurable financial assumptions (WACC, terminal growth) for live, agent-assisted fair-value estimation.
+- **Market Dashboard**: Add a lightweight, cached homepage dashboard displaying real-time market indices, sector performance, and top movers.

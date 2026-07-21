@@ -63,6 +63,7 @@ async def stream_chat_response(
         final_text = ""
         final_ui_blocks: list[dict] = []
         final_trace: list[dict] = []
+        final_provider_meta: dict = {}
 
         # Send an immediate heartbeat so the client knows the stream is open
         yield _sse("status", {"stage": "planning"})
@@ -86,6 +87,7 @@ async def stream_chat_response(
                         msg = node_output["messages"][0]
                         final_text = _extract_text(msg.content)
                         final_ui_blocks = node_output.get("ui_blocks", [])
+                        final_provider_meta = node_output.get("provider_meta", {})
                         yield _sse("token", {"text": final_text})
                         for block in final_ui_blocks:
                             yield _sse("ui_block", block)
@@ -100,5 +102,8 @@ async def stream_chat_response(
             ui_blocks=final_ui_blocks, tool_trace=final_trace,
         )
         await session.commit()
-        logger.info("[stream] Done for thread %s", thread_id)
-        yield _sse("done", {})
+        logger.info("[stream] Done for thread %s (provider: %s, fallback: %s)",
+                    thread_id,
+                    final_provider_meta.get("provider", "unknown"),
+                    final_provider_meta.get("fallback_used", False))
+        yield _sse("done", {"provider_meta": final_provider_meta})
