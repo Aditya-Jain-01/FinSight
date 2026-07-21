@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Surfaces */
+    --bg-page: #F7F6F3;
+    --bg-panel: #FFFFFF;
+    --bg-panel-muted: #F2F1EC;
+    --border: #E6E5E0;
+    --border-strong: #D1CFCA;
+  
+    /* Text */
+    --text-primary: #1A1A1A;
+    --text-secondary: #595959;
+    --text-muted: #8C8C8C;
+  
+    /* Brand accent (Deep Charcoal) */
+    --accent: #1E1E1E;
+    --accent-hover: #000000;
+    --accent-muted: #E8E7E2;
+  
+    /* Gain / loss — muted semantic colors */
+    --gain: #4A7A5D;
+    --gain-muted: #E6EFEA;
+    --loss: #A25858;
+    --loss-muted: #F4EAE9;
+  }
+  
+  body {
+    background: var(--bg-page);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: var(--accent-muted);
+    color: var(--accent);
+  }
+
+  /* Custom scrollbar for flat UI */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+}
+
+@layer components {
+  /* Ledger-rule underline — the dashed divider under a cited line */
+  .ledger-rule {
+    border-top: 1px dashed var(--border-strong);
+    padding-top: 8px;
+  }
+  
+  /* Footnote citation marker */
+  .footnote-mark {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  
+  /* Tabular figures for prices, deltas, tickers */
+  .figure {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Base buttons */
+  .btn-primary {
+    background: var(--accent);
+    color: #FFFFFF;
+    font-weight: 500;
+    transition: background 0.2s;
+  }
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    font-weight: 500;
+    transition: background 0.2s;
+  }
+  .btn-secondary:hover {
+    background: var(--bg-panel-muted);
+  }
+
+  /* Typing indicator dots */
+  .typing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--text-muted);
+    animation: typingBounce 1.4s ease-in-out infinite;
+  }
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+}
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}

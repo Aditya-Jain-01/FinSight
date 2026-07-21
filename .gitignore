@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+*.db
+
+# Backend
+backend/.env
+
+# Frontend
+node_modules/
+.next/
+out/
+dist/
+build/
+frontend/.env.local
+frontend/.env
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated data
+seed_filings/
