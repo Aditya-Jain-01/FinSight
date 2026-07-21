@@ -137,7 +137,6 @@ export default function ChatPage() {
       <ChatInput
         onSend={handleSend}
         disabled={isStreaming || backendStatus === "offline"}
-        stage={stage}
       />
     </div>
   );
