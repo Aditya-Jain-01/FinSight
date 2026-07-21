@@ -76,11 +76,15 @@ This project is a work in progress and serves as a portfolio piece exploring age
    npm run dev
    ```
 
-## Roadmap
+## Future Improvements
 
 - [ ] Complete the RAG ingestion pipeline for automated document parsing.
 - [ ] Add multi-provider LLM fallbacks (Groq, NVIDIA NIM) to handle API rate limits gracefully.
 - [ ] Expand tool capabilities for deeper fundamental analysis.
+- [ ] Introduce multiple investment analysis lenses (Value, Growth, etc.) based on publicly documented investment frameworks.
+- [ ] Optimize RAG ingestion for large financial filings through smarter section filtering and chunking.
+- [ ] Build an interactive valuation sandbox with configurable financial assumptions and live fair-value estimation.
+- [ ] Add a lightweight market dashboard with cached real-time market indices and top movers.
 
 ## Disclaimer
 
