@@ -26,16 +26,32 @@ export default function ChatPage() {
       if (healthy) {
         setBackendStatus("online");
       } else if (elapsed > 3000) {
-        // Took too long — likely Render cold start
+        // Took too long — likely Render cold start.
+        // Render free tier can take 50+ seconds to spin up, so we need to poll patiently.
         setBackendStatus("waking");
-        // Retry in a few seconds
-        setTimeout(async () => {
+        
+        let attempts = 0;
+        const maxAttempts = 12; // 12 attempts * 5s = 60s of total patience
+
+        const poll = async () => {
           if (cancelled) return;
-          const retryHealthy = await checkHealth();
-          if (!cancelled) {
-            setBackendStatus(retryHealthy ? "online" : "offline");
+          if (attempts >= maxAttempts) {
+            setBackendStatus("offline");
+            return;
           }
-        }, 10000);
+          
+          attempts++;
+          const retryHealthy = await checkHealth();
+          if (cancelled) return;
+          
+          if (retryHealthy) {
+            setBackendStatus("online");
+          } else {
+            setTimeout(poll, 5000);
+          }
+        };
+        
+        setTimeout(poll, 5000);
       } else {
         setBackendStatus("offline");
       }
