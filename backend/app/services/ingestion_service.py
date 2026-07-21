@@ -27,6 +27,22 @@ from app.models.document import Document, DocumentChunk
 
 logger = logging.getLogger(__name__)
 
+_COMMON_WORDS = {
+    "the", "and", "of", "to", "in", "a", "is", "for", "on", "that", "with",
+    "as", "by", "this", "are", "at", "be", "or", "from", "was", "has", "have",
+}
+
+def _is_low_quality_chunk(text: str, min_words: int = 15, min_common_ratio: float = 0.04) -> bool:
+    """Drops running headers/footers and garbled-extraction chunks before they
+    get embedded and surfaced as citations."""
+    words = re.findall(r"[a-zA-Z']+", text.lower())
+    if len(words) < min_words:
+        return True  # too short — likely just a page header/footer
+    common_hits = sum(1 for w in words if w in _COMMON_WORDS)
+    if (common_hits / max(1, len(words))) < min_common_ratio:
+        return True  # almost no common English words — likely reversed/garbled text
+    return False
+
 # ---------------------------------------------------------------------------
 # Embedding model — BAAI/bge-base-en-v1.5
 # This natively outputs 768-dim vectors, matching our schema exactly.
@@ -339,7 +355,12 @@ async def ingest_document(
     raw_text = "\n\n".join(filtered_pages)
 
     # --- 3. Chunk ---
-    chunks = chunk_text(raw_text)
+    raw_chunks = chunk_text(raw_text)
+    chunks = [c for c in raw_chunks if not _is_low_quality_chunk(c["content"])]
+    dropped = len(raw_chunks) - len(chunks)
+    if dropped:
+        print(f"  🧹 Dropped {dropped} low-quality chunks (headers/footers/garbled text)")
+
     if not chunks:
         if doc:
             doc.status = "error"

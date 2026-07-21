@@ -6,12 +6,12 @@ class Settings(BaseSettings):
     google_api_key: str
     huggingface_api_key: str
     groq_api_key: str
-    groq_model: str = "openai/gpt-oss-120b"
+    groq_model: str = "llama-3.3-70b-versatile"
 
     cors_origins: list[str] = [
         "http://localhost:3000",
         "http://localhost:3001",
-        "https://finsight-f55scv9lk-adityajain7774-8470s-projects.vercel.app"
+        "https://finsight-mauve-eight.vercel.app/"
     ]
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
