@@ -30,6 +30,7 @@ export const StockOverviewSchema = z.object({
       title: z.string(),
       publisher: z.string().optional(),
       link: z.string().optional(),
+      timestamp: z.number().optional(),
     })).optional(),
     filingExcerpt: z.object({
       documentTitle: z.string(),
@@ -130,3 +131,13 @@ export type MetricCardProps = z.infer<typeof MetricCardSchema>["props"];
 export type FilingExcerptProps = z.infer<typeof FilingExcerptSchema>["props"];
 export type MarketBriefProps = z.infer<typeof MarketBriefSchema>["props"];
 export type UIBlock = z.infer<typeof UIBlockSchema>;
+
+export type NewsListProps = {
+  ticker?: string;
+  news?: {
+    title: string;
+    publisher?: string;
+    link?: string;
+    timestamp?: number;
+  }[];
+};
