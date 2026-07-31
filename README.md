@@ -31,13 +31,6 @@ FinSight is an agentic financial research assistant designed to answer natural-l
 > 🔗 **Live Demo:** [Vercel Deployment](#)
 > 🔗 **API Health Check:** [Render Endpoint](#)
 
-### Screenshots
-
-*(Placeholders for future screenshots)*
-- **![Agent Interface Placeholder](https://via.placeholder.com/800x400?text=Agent+Chat+Interface)**
-- **![RAG Citations Placeholder](https://via.placeholder.com/800x400?text=RAG+Cited+Filing+Excerpt)**
-- **![Stock Overview Placeholder](https://via.placeholder.com/800x400?text=Stock+Overview+UI+Block)**
-
 ---
 
 ## Architecture
