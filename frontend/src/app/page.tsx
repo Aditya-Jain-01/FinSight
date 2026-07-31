@@ -77,11 +77,15 @@ export default function Home() {
           <div className="order-2 lg:order-1 bg-panel border border-border rounded-3xl p-8 shadow-sm transform transition-transform hover:-translate-y-1 duration-300">
             <FilingExcerpt 
               documentTitle="Reliance Industries Annual Report 2024"
-              sectionTitle="MANAGEMENT DISCUSSION AND ANALYSIS"
-              content="The company's capital expenditure for FY2024 was ₹1,31,769 crore, primarily driven by the accelerated rollout of 5G networks and expansion of the retail footprint."
               ticker="RELIANCE.NS"
               source="seed"
-              relevanceScore={0.8734}
+              excerpts={[
+                {
+                  sectionTitle: "MANAGEMENT DISCUSSION AND ANALYSIS",
+                  content: "The company's capital expenditure for FY2024 was ₹1,31,769 crore, primarily driven by the accelerated rollout of 5G networks and expansion of the retail footprint.",
+                  relevanceScore: 0.8734
+                }
+              ]}
             />
           </div>
           
