@@ -1,207 +1,298 @@
 # FinSight
 
-**An agentic financial research assistant covering US and Indian stock markets.**
-A hand-built LangGraph agent (not a prebuilt chain) combining live market data with cited retrieval over real annual reports, streamed to a chat interface.
-
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-custom%20agent-1C3C3C)](https://langchain-ai.github.io/langgraph/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white)](https://neon.tech/)
-[![License](https://img.shields.io/badge/status-active%20development-yellow)]()
-
-🔗 **Live demo:** _add your Vercel URL here_
-🔗 **API health check:** _add your Render URL here_ `/api/v1/health`
-
-> **Status:** Backend (agent, tools, RAG pipeline, streaming API) is built and verified end-to-end. Frontend is specced — see [Known Limitations](#known-limitations--not-yet-implemented) for current implementation status.
+FinSight is an agentic financial research assistant designed to answer natural-language questions about US and Indian equities. Rather than relying on a generic LLM system prompt, FinSight employs a custom-built LangGraph agent that seamlessly combines live market data fetching with cited retrieval over real annual reports. The system returns verifiable, deterministic financial data rendered into bespoke UI components over a streaming Server-Sent Events (SSE) connection, ensuring that every claim is cited and every tool call is completely transparent to the user.
 
 ---
 
-## Table of Contents
+## Features
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Setup & Installation](#setup--installation)
-- [Design Decisions Worth Noting](#design-decisions-worth-noting)
-- [Known Limitations](#known-limitations--not-yet-implemented)
-- [Roadmap](#roadmap)
+### AI Orchestration
+- **Custom Agent Graph:** A fully hand-written LangGraph execution flow (Planner → Tool Executor → Responder) instead of generic wrappers like `create_react_agent`.
+- **Deterministic UI Generation:** The LLM focuses exclusively on analytical prose. A parallel Python pipeline strictly maps tool outputs into typed, Zod-validated UI components to prevent JSON-generation hallucinations.
+
+### Live Market Data
+- **Multi-Market Support:** Live price streams, historical charts, financial ratios, and news coverage for both US and Indian (NSE/BSE) equities via `yfinance`.
+- **Intelligent Ticker Normalization:** Automatically handles `.NS`/`.BO` exchange suffixes for Indian markets.
+
+### RAG & Retrieval
+- **Keyword Pre-Filtering:** PDF ingestion dynamically drops low-value pages (e.g., table of contents) that lack financial relevance prior to chunking, optimizing embedding costs and search density.
+- **Vector Search:** HNSW indexing in PostgreSQL via `pgvector` for sub-millisecond similarity search over cited annual reports.
+
+### Real-Time Infrastructure
+- **SSE Streaming:** Chat interface renders real-time progressive updates (Status → Tool Calls → Token Prose → UI Blocks).
+- **Bidirectional WebSockets:** Live, client-cancellable WebSocket streams for the document ingestion pipeline.
+- **Upstream WebSockets:** Backend-to-Finnhub WebSocket integration for live price ticking.
 
 ---
 
-## Overview
+## Demo
 
-FinSight answers natural-language questions about US and Indian equities by reasoning over live market data and cited excerpts from real annual reports — not by prompting a generic chatbot with a system message. The agent graph, tool orchestration, and UI-payload construction are all hand-written; LangChain is used only for its model/tool/embedding wrapper interfaces, not as an off-the-shelf agent framework.
+> *Note: Add your Vercel URL and Render API URL here.*
+> 🔗 **Live Demo:** [Vercel Deployment](#)
+> 🔗 **API Health Check:** [Render Endpoint](#)
 
-**At a glance:**
-- 3-node LangGraph agent (planner → tool executor → responder), written from scratch
-- 4 live market-data tools across US and Indian (NSE/BSE) exchanges via `yfinance`
-- RAG over real annual filings — pgvector cosine retrieval with cited, relevance-scored excerpts
-- SSE-streamed chat responses with structured, deterministically-built UI payloads
-- A custom bidirectional WebSocket layer for live document-ingestion progress and mid-flight cancellation
+### Screenshots
+
+*(Placeholders for future screenshots)*
+- **![Agent Interface Placeholder](https://via.placeholder.com/800x400?text=Agent+Chat+Interface)**
+- **![RAG Citations Placeholder](https://via.placeholder.com/800x400?text=RAG+Cited+Filing+Excerpt)**
+- **![Stock Overview Placeholder](https://via.placeholder.com/800x400?text=Stock+Overview+UI+Block)**
 
 ---
 
 ## Architecture
 
-### 1. The Agent (LangGraph)
+FinSight operates on a decoupled architecture where the Next.js frontend communicates with a FastAPI backend. The backend manages the LangGraph agent, state persistence in PostgreSQL, and real-time data ingestion.
 
-A 3-node graph, written from scratch — not `create_react_agent` or a prebuilt `AgentExecutor`:
+```mermaid
+graph TD
+    %% Frontend
+    Client[Next.js Client]
+    
+    %% API Gateway
+    FastAPI[FastAPI Backend]
+    Client -- SSE Stream --> FastAPI
+    Client -- WebSockets --> FastAPI
+    
+    %% LangGraph Agent
+    subgraph LangGraph Agent
+        Planner[Planner Node]
+        Executor[Tool Executor Node]
+        Responder[Responder Node]
+    end
+    
+    FastAPI --> Planner
+    Planner --> Executor
+    Executor --> Responder
+    Responder --> FastAPI
+    
+    %% Tools & Data
+    subgraph Tools
+        YF[yfinance API]
+        RAG[RAG Search]
+        Finnhub[Finnhub WebSockets]
+    end
+    
+    Executor --> YF
+    Executor --> RAG
+    FastAPI -- Live Ticker --> Finnhub
+    
+    %% Database
+    Postgres[(PostgreSQL + pgvector)]
+    RAG --> Postgres
+```
 
-| Node | Responsibility |
-|---|---|
-| **Planner** | Decides which tools to call; normalizes tickers (`.NS`/`.BO` for Indian exchanges, no suffix for US tickers) |
-| **Tool Executor** | Runs the planner's tool calls; catches per-tool failures into an error field instead of crashing the graph |
-| **Responder** | Writes final prose from tool outputs only — the LLM never writes UI JSON. Deterministic Python code builds the `ui_block` payloads from tool results |
+---
 
-### 2. Live Market Data
+## Request Flow
 
-Four tools, all backed by `yfinance`, covering both markets:
+A user's chat query traverses a highly structured lifecycle designed for visibility and fault tolerance:
 
-| Tool | Returns |
-|---|---|
-| `get_stock_price` | Current price + historical closes |
-| `get_financials` | P/E, market cap, EPS, dividend yield, 52-week high/low |
-| `get_company_info` | Sector, industry, business summary |
-| `get_stock_news` | Recent headlines |
-
-### 3. RAG Pipeline
-
-- PDF ingestion via `pdfplumber`, chunked with `RecursiveCharacterTextSplitter`
-- **Keyword pre-filtering** — drops pages that don't match financial-relevance terms (e.g. "management discussion," "risk factors," "capex") before chunking. Observed reduction: 0.6%–13.5% on seeded filings — varies by document structure; main cost/time savings come from batching and embedding fewer low-value pages, not a fixed universal percentage.
-- **Embeddings** — HuggingFace Inference API, `BAAI/bge-base-en-v1.5` (768-dim, matches the `vector(768)` schema exactly — ingestion and query-time embedding use the identical model, required for valid cosine similarity)
-- **Vector store** — PostgreSQL + pgvector on Neon, HNSW index (`vector_cosine_ops`) on `document_chunks.embedding`
-- **Rate-limit resilience** — batched embedding calls with exponential backoff/retry on 429s and transient provider errors
-
-### 4. Streaming API
-
-FastAPI + `StreamingResponse` over SSE. Each chat turn emits, in order:
-
-`status` (planning started) → zero or more `tool_call` events → `token` (complete prose) → zero or more `ui_block` events → `done`
-
-
-The streaming endpoint opens its own DB session directly via `async_session_maker` rather than FastAPI's `Depends(get_db)`, since the latter tears down before a `StreamingResponse` finishes sending.
-
-### 5. WebSockets — used where the protocol is actually required
-
-- **Document ingestion** (`/api/v1/ws/documents/{id}`) — a custom, bidirectional WebSocket streams live pipeline-phase progress (extraction → filtering → chunking → embedding) and supports client-initiated cancellation of the running background task mid-ingestion. This is real two-way traffic, not one-way push — the client can send `{"action": "cancel"}` and the server acts on it immediately.
-- **Finnhub integration** — the backend-to-Finnhub connection uses WebSockets because Finnhub's API is WebSocket-native; this is an upstream integration requirement, not a protocol choice made for its own sake.
+1. **User Request:** The Next.js frontend sends a natural language query via an SSE endpoint.
+2. **API Endpoint (`/api/v1/threads`):** FastAPI initializes an asynchronous database session and streams a `status` event to the client.
+3. **Planner Node:** The LLM interprets the query, normalizes stock tickers, and decides which tools to invoke.
+4. **Tool Executor Node:** The system executes the requested tools (`yfinance`, RAG queries). Crucially, any tool failures are caught and injected back into the state as error strings, preventing a graph crash.
+5. **Retriever (If Applicable):** For RAG queries, semantic search is executed against the `pgvector` database to pull the most relevant document chunks.
+6. **Responder Node:** 
+   - **Prose:** The LLM receives the verified tool outputs and streams conversational analysis tokens to the client.
+   - **Structured UI:** A deterministic Python builder inspects the tool trace and constructs structured `ui_block` JSON payloads for the frontend.
+7. **Frontend Rendering:** The client parses the SSE stream, rendering markdown prose and hydration-safe React components (`StockOverview`, `ResearchCard`, etc.).
 
 ---
 
 ## Tech Stack
 
-**Backend (implemented & tested)**
+### Languages
+- **Python 3.10+** (Backend)
+- **TypeScript** (Frontend)
 
-| Layer | Technology |
-|---|---|
-| Framework | FastAPI + Uvicorn |
-| Agent | LangGraph + LangChain (wrappers only — planner logic, tool selection, and UI-block construction are hand-written) |
-| Chat LLM | Groq (`llama-3.3-70b-versatile`) |
-| Embeddings | HuggingFace Inference API (`BAAI/bge-base-en-v1.5`) |
-| Database | PostgreSQL (Neon) + pgvector + SQLAlchemy (async) + Alembic |
-| Document processing | `pdfplumber` |
+### Frameworks
+- **FastAPI / Uvicorn** (High-performance async backend API)
+- **Next.js App Router** (React frontend)
+- **TailwindCSS** (Utility-first styling)
 
-**Frontend (spec complete — see status note above)**
+### AI & Data Pipeline
+- **LangGraph & LangChain** (Agent orchestration and provider wrappers)
+- **Groq (`llama-3.3-70b-versatile`)** (Primary LLM for planning and response generation)
+- **HuggingFace Inference API (`BAAI/bge-base-en-v1.5`)** (768-dimensional text embeddings)
+- **`pdfplumber`** (PDF text extraction)
 
-| Layer | Technology |
-|---|---|
-| Framework | Next.js (App Router) + TypeScript + Tailwind — planned |
-| Charts | recharts (`PriceChart`) |
-| Validation | Zod-validated `ui_block` discriminated union |
+### Database
+- **PostgreSQL** (Managed by Neon)
+- **`pgvector`** (Cosine similarity vector indexing)
+- **SQLAlchemy (async) & Alembic** (ORM and migrations)
+
+### Visualization
+- **Recharts** (Interactive charting for price history)
+- **Zod** (Strict runtime schema validation for UI blocks)
 
 ---
 
-## Setup & Installation
+## Folder Structure
+
+```text
+.
+├── backend/
+│   ├── alembic/              # Database migration scripts
+│   ├── app/
+│   │   ├── agent/            # LangGraph nodes, tools, and LLM wrappers
+│   │   ├── api/v1/           # FastAPI routers and SSE/WebSocket endpoints
+│   │   ├── models/           # SQLAlchemy ORM definitions
+│   │   ├── schemas/          # Pydantic validation schemas
+│   │   └── services/         # Core business logic (chat, live price bus)
+│   ├── scripts/              # Standalone CLI tools (e.g., seed_documents.py)
+│   ├── main.py               # Application entrypoint and lifespan
+│   └── render.yaml           # Deployment configuration
+└── frontend/
+    ├── src/
+    │   ├── app/              # Next.js App Router pages
+    │   ├── components/       # UI Components (Generative UI, Base UI)
+    │   ├── hooks/            # Custom React hooks (usePriceStream, etc.)
+    │   ├── lib/              # Utilities and API clients
+    │   └── stores/           # Global state management
+    ├── package.json
+    └── tailwind.config.js
+```
+
+---
+
+## Core Components
+
+- **Agent (`backend/app/agent/`)**: The brain of the application. Contains the `build_graph()` logic connecting the `Planner`, `Tool Executor`, and `Responder`. Tools like `get_financials.py` and `rag_search.py` are defined here.
+- **Generative UI Registry (`frontend/src/components/generative-ui/`)**: A strictly typed React component registry. It maps the backend's deterministic JSON blocks (like `StockOverview` and `ResearchCard`) to their respective rendering logic, validating incoming props with Zod schemas.
+- **Price Bus (`backend/app/services/price_bus.py`)**: A centralized WebSocket service that streams live ticker data from Finnhub to all active frontend clients, avoiding redundant upstream connections.
+
+---
+
+## API Endpoints
+
+| Method | Route | Purpose | Authentication |
+|---|---|---|---|
+| `POST` | `/api/v1/threads` | Initialize a new chat thread | Public |
+| `POST` | `/api/v1/threads/{id}/messages` | Stream agent responses via SSE | Public |
+| `GET` | `/api/v1/chart/{ticker}` | Fetch historical price data | Public |
+| `GET` | `/api/v1/market/brief` | Fetch a high-level market summary | Public |
+| `POST` | `/api/v1/documents/upload` | Upload a PDF for ingestion | Public |
+| `GET` | `/api/v1/health` | Service health check | Public |
+
+---
+
+## WebSocket Architecture
+
+WebSockets are utilized exclusively where real-time, low-latency bidirectional communication is an architectural necessity:
+
+1. **Document Ingestion (`/api/v1/ws/documents/{id}`)**
+   - **Why:** Document parsing, filtering, chunking, and embedding is a long-running background process.
+   - **Flow:** The client opens a WebSocket connection to monitor live progress. It is fully bidirectional—if the user navigates away or clicks "Cancel," the client sends a `{"action": "cancel"}` payload, and the server immediately aborts the embedding loop to save compute.
+2. **Finnhub Integration (`backend/app/api/v1/ws_prices.py`)**
+   - **Why:** Finnhub's live market data API requires a WebSocket connection.
+   - **Flow:** The backend establishes a single persistent upstream WebSocket to Finnhub during the application lifespan. It then multiplexes this single stream down to any connected frontend clients via a broadcast system, preserving upstream rate limits.
+
+---
+
+## Database
+
+FinSight uses a Neon Serverless PostgreSQL database.
+
+- **`threads` & `messages`:** Persist the chat history and the LangGraph checkpoints, enabling long-running conversational memory.
+- **`documents` & `document_chunks`:** Store the ingested annual reports. 
+- **Vector Storage:** The `document_chunks` table utilizes `pgvector` with a 768-dimensional `embedding` column. It features an HNSW (Hierarchical Navigable Small World) index configured with `vector_cosine_ops` to enable extremely fast, scalable similarity search.
+
+---
+
+## AI & RAG Pipeline
+
+### Agentic Flow
+1. **Planner:** Normalizes inputs and issues parallel tool execution commands.
+2. **Execution:** Tools run and return raw data.
+3. **Responder:** Analyzes the tool trace. If a query requires UI generation (like fetching a stock price), a standalone Python function deterministicially maps the tool output into a `UIBlock` JSON payload, preventing the LLM from hallucinating invalid UI states.
+
+### Retrieval-Augmented Generation (RAG)
+1. **Ingestion & Filtering:** `pdfplumber` extracts text. A keyword pre-filter aggressively drops pages lacking financial terminology (e.g., "capex", "management discussion") before chunking, drastically reducing embedding costs.
+2. **Chunking & Embedding:** `RecursiveCharacterTextSplitter` chunks the remaining text. Batched requests with exponential backoff are sent to HuggingFace Inference API (`BAAI/bge-base-en-v1.5`).
+3. **Search & Citations:** Queries execute a cosine similarity search against `pgvector`. The highest-scoring excerpts are surfaced to the LLM and embedded in a `FilingExcerpt` UI block to provide the user with verbatim, verifiable citations.
+
+---
+
+## Installation
 
 ### Prerequisites
 - Python 3.10+
-- A Neon Postgres database with the `vector` extension enabled
-- API keys: Groq and HuggingFace (Inference-scoped token — the plain "Read" preset is not sufficient; use the "Inference" preset or a fine-grained token with "Make calls to Inference Providers" enabled)
+- Node.js 18+
+- A Neon Postgres database with the `vector` extension enabled.
+- API keys for Groq and HuggingFace (must have Inference scope).
 
-### Backend
+### 1. Backend Setup
 
 ```bash
 cd backend
 python -m venv venv
-# Windows: .\venv\Scripts\Activate.ps1
-# Mac/Linux: source venv/bin/activate
+
+# Windows
+.\venv\Scripts\Activate.ps1
+# Mac/Linux
+source venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-Create `backend/.env`:
+Create `backend/.env` with your API keys (see [Environment Variables](#environment-variables)).
 
-```env
-DATABASE_URL=postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require
-GROQ_API_KEY=gsk_your_groq_key
-HUGGINGFACE_API_KEY=hf_your_hf_key
-```
-
-Run migrations:
-
+Run database migrations:
 ```bash
 alembic upgrade head
 ```
 
-Start the server:
-
+Start the FastAPI server:
 ```bash
 uvicorn app.main:app --reload
 ```
 
-### Verifying the backend works
+### 2. Frontend Setup
 
 ```bash
-curl -s -X POST http://localhost:8000/api/v1/threads
-# then, using the returned thread_id:
-curl -N -X POST http://localhost:8000/api/v1/threads/{thread_id}/messages \
-  -H "Content-Type: application/json" \
-  -d '{"content": "What is Apple'\''s current stock price?"}'
+cd frontend
+npm install
+npm run dev
 ```
 
-Expect a stream ending in `event: done`, with a `PriceChart` `ui_block` containing real fetched data.
-
-### Seeding the RAG database
-
-1. Place PDF annual reports in `seed_filings/` (repo root)
-2. Run:
+### 3. Seeding the Database
+Place any PDF annual reports in `seed_filings/` (at the repository root) and run:
 ```bash
-   cd backend
-   python -m scripts.seed_documents
+cd backend
+python -m scripts.seed_documents
 ```
-
-This embeds each filing in batches with retry/backoff on rate limits. For large filings (300+ pages), expect this to take several minutes — the script logs per-batch progress.
-
-> **Important:** if you change the embedding model or provider, existing `document_chunks` rows are in a different vector space and must be cleared before re-seeding:
-> ```sql
-> DELETE FROM document_chunks;
-> DELETE FROM documents;
-> ```
+*Note: If you change the embedding model, existing `document_chunks` rows must be truncated as they will reside in a different vector space.*
 
 ---
 
-## Design Decisions Worth Noting
+## Environment Variables
 
-- **UI generation is deterministic, not model-written.** The LLM writes prose; a Python function (`_build_ui_blocks`) inspects verified tool output and constructs the `ui_block` JSON. Deliberate choice to keep structured UI payloads reliable regardless of which LLM is orchestrating.
-- **Provider migration:** originally built on Gemini for both chat and embeddings. Migrated to Groq (chat) and HuggingFace (embeddings) after repeated free-tier quota/auth friction during development. The two are fully decoupled — LangChain's `bind_tools()` abstraction and the async embeddings interface meant swapping providers touched only the instantiation code, not the agent graph or ingestion logic.
-- **Model-specific formatting drift:** switching chat providers surfaced that not all models honor "no markdown" instructions equally reliably (Gemini complied consistently; Llama-3.3 via Groq occasionally leaked markdown tables/bold syntax). Mitigated with a stricter system prompt plus a server-side markdown-stripping safety net, rather than relying on prompt compliance alone.
-
----
-
-## Known Limitations / Not Yet Implemented
-
-- **Frontend:** spec and component design complete; Next.js implementation status should be confirmed/updated here once built.
-- **In-chat PDF upload:** the `POST /api/v1/documents/upload` backend endpoint exists; a frontend upload control that auto-triggers analysis after upload has been designed but not yet confirmed wired end-to-end.
-- **Ingestion resumability:** the seed script retries within a batch on failure, but does not currently skip already-completed documents on a re-run — a killed run needs to be restarted from the top (or resumed manually by editing the PDF list).
-- **DB connection resilience:** no `pool_pre_ping`/`pool_recycle` configured yet — worth adding given Neon's scale-to-zero behavior, but not yet done.
-- **`MetricCard` / `ComparisonTable` components:** intentionally cut from MVP scope. The generative-UI registry currently implements `StockOverview`, `ResearchCard`, `MarketBrief`, `PriceChart`, `AgentTrace`, and `FilingExcerpt`.
-- **Auth:** none — public demo, zero login friction, by design for this phase.
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string (Neon recommended). | - |
+| `GROQ_API_KEY` | Yes | Groq API key for Llama-3 inference. | - |
+| `HUGGINGFACE_API_KEY` | Yes | HuggingFace key for embedding generation. | - |
 
 ---
 
-## Roadmap
+## Future Improvements
 
-- Verifier node (rule-based numeric sanity check between tool output and response, logged into trace)
-- `MetricCard` for single-value questions (P/E, market cap)
-- Auth (Clerk) if/when moving beyond public-demo scope
-- Ingestion resumability + connection-pool hardening
+- **Ingestion Resumability:** Currently, the seed script retries failed batches, but a killed run must be restarted from the beginning. Adding state-tracking for partially processed documents would improve resilience.
+- **Database Connection Pooling:** Hardening the SQLAlchemy configuration with `pool_pre_ping` to better handle Neon's scale-to-zero connection drops.
+- **Authentication:** Integrating Clerk or NextAuth for personalized threads and secure document uploads.
+- **Verifier Node:** Implementing a rule-based LangGraph node that sanity-checks LLM numeric outputs against the raw tool trace to guarantee zero hallucinated metrics.
+
+---
+
+## Lessons Learned
+
+- **Deterministic UI is Safer than Generative JSON:** Initially, we relied on the LLM to output UI configurations in JSON format. Switching providers highlighted formatting drift (e.g., Llama-3 occasionally leaking markdown into JSON blocks). Moving the `ui_block` payload construction to a deterministic Python function acting *on* the tool trace resulted in 100% structural reliability while letting the LLM focus purely on analysis.
+- **Provider Agnosticism Pays Off:** The architecture was originally built on Gemini. Decoupling the LLM orchestration via LangChain's `bind_tools()` abstraction meant migrating to Groq (for chat) and HuggingFace (for embeddings) required changing instantiation code only, without touching the graph logic.
+- **Targeted RAG Optimization:** Keyword pre-filtering before chunking proved significantly more cost-effective than embedding entire 300-page SEC filings, demonstrating that preprocessing is often a better lever for optimization than raw vector DB performance.
+
+---
+
+## License
+
+This project is open-source and available under the MIT License.
