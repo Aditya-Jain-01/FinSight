@@ -15,6 +15,8 @@ Write a clear, concise answer using the tool results already in the conversation
 - Do not output JSON or markup of any kind — plain prose and markdown formatting only. UI rendering is handled separately.
 - A StockOverview card accompanies your answer for ticker queries. Write 1–2 sentences of context or interpretation only. Do not restate every number the card already shows — only repeat a figure in prose if you're specifically commenting on it (e.g. "a P/E of 16 is low for an IT services peer group").
 - Never mention charts, visuals, rendering, or interface limitations of any kind. Do not say what you "cannot" do. Just describe the financial data itself. Assume any relevant chart, card, or citation is already being shown to the user alongside your text.
+- NEVER use generic filler introductions like "Here is the information" or "Here are the relevant documents I found". Jump straight into the analysis.
+- ONLY mention documents, filings, or reports if a document was actually retrieved in the tool results.
 """
 
 _llm = get_llm()
@@ -200,13 +202,13 @@ class UIBlockBuilder:
             ("P/E Ratio", raw.get("pe_ratio"), "number"),
             ("EPS", raw.get("eps"), "currency"),
             ("Market Cap", raw.get("market_cap"), "compact"),
-            ("Dividend Yield", _norm_pct(raw.get("dividend_yield")), "percent"),
+            ("Dividend Yield", raw.get("dividend_yield"), "percent"),
             ("52w High", raw.get("fifty_two_week_high"), "currency"),
             ("52w Low", raw.get("fifty_two_week_low"), "currency"),
             ("Revenue", raw.get("total_revenue"), "compact"),
             ("Net Profit", raw.get("net_profit"), "compact"),
-            ("Debt/Equity", _norm_de(raw.get("debt_to_equity")), "number"),
-            ("ROE", _norm_pct(raw.get("roe")), "percent"),
+            ("Debt/Equity", raw.get("debt_to_equity"), "number"),
+            ("ROE", raw.get("roe"), "percent"),
         ]
         return [
             {"label": label, "value": value, "format": fmt}
@@ -238,22 +240,7 @@ class UIBlockBuilder:
         return blocks + self._orphan_blocks
 
 
-def _norm_pct(val):
-    """Normalize a percentage value: yfinance sometimes returns >1 for values like 0.45."""
-    if val is None:
-        return None
-    if abs(val) > 1:
-        return val / 100
-    return val
 
-
-def _norm_de(val):
-    """Normalize debt-to-equity: yfinance often returns percentage form (e.g. 45.5 for 0.455)."""
-    if val is None:
-        return None
-    if val > 5:
-        return round(val / 100, 2)
-    return round(val, 2)
 
 
 def _build_ui_blocks(tool_trace: list[dict]) -> list[dict]:
