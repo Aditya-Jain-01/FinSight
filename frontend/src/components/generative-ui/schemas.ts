@@ -111,6 +111,44 @@ export const MarketBriefSchema = z.object({
   props: z.record(z.unknown()).optional(),
 });
 
+export const ResearchCardSchema = z.object({
+  component: z.literal("ResearchCard"),
+  props: z.object({
+    ticker: z.string(),
+    currency: z.enum(["INR", "USD"]).optional(),
+    currentPrice: z.number().optional(),
+    lastUpdated: z.string().optional(),
+    period: z.string().optional(),
+    historicalPrices: z.array(z.object({
+      date: z.string(),
+      close: z.number(),
+    })).optional(),
+    keyMetrics: z.array(z.object({
+      label: z.string(),
+      value: z.number().nullable(),
+      format: z.string(),
+    })).optional(),
+    kpis: z.array(z.object({
+      label: z.string(),
+      value: z.number().nullable(),
+      format: z.string(),
+    })).optional(),
+    news: z.array(z.object({
+      title: z.string(),
+      publisher: z.string().optional(),
+      link: z.string().optional(),
+      timestamp: z.number().optional(),
+    })).optional(),
+    excerpts: z.array(z.object({
+      documentTitle: z.string(),
+      sectionTitle: z.string(),
+      content: z.string(),
+      relevanceScore: z.number().optional(),
+    })).optional(),
+    sources: z.array(z.string()).optional(),
+  }),
+});
+
 // ─── Union (all component types the frontend can render) ────────────
 
 export const UIBlockSchema = z.discriminatedUnion("component", [
@@ -120,6 +158,7 @@ export const UIBlockSchema = z.discriminatedUnion("component", [
   MetricCardSchema,
   FilingExcerptSchema,
   MarketBriefSchema,
+  ResearchCardSchema,
 ]);
 
 // ─── Type exports ───────────────────────────────────────────────────
@@ -130,6 +169,7 @@ export type PriceChartProps = z.infer<typeof PriceChartSchema>["props"];
 export type MetricCardProps = z.infer<typeof MetricCardSchema>["props"];
 export type FilingExcerptProps = z.infer<typeof FilingExcerptSchema>["props"];
 export type MarketBriefProps = z.infer<typeof MarketBriefSchema>["props"];
+export type ResearchCardProps = z.infer<typeof ResearchCardSchema>["props"];
 export type UIBlock = z.infer<typeof UIBlockSchema>;
 
 export type NewsListProps = {

@@ -5,6 +5,7 @@ import { AgentTrace } from "./AgentTrace";
 import { FilingExcerpt } from "./FilingExcerpt";
 import { MetricCard } from "./MetricCard";
 import { MarketBrief } from "./MarketBrief";
+import { ResearchCard } from "./ResearchCard";
 import type {
   StockOverviewProps,
   AgentTraceProps,
@@ -22,6 +23,7 @@ const REGISTRY: Record<string, ComponentType<AnyProps>> = {
   StockOverview: StockOverview as ComponentType<AnyProps>,
   AgentTrace: AgentTrace as ComponentType<AnyProps>,
   MarketBrief: MarketBrief as ComponentType<AnyProps>,
+  ResearchCard: ResearchCard as ComponentType<AnyProps>,
   // Legacy — kept for old persisted messages
   PriceChart: PriceChart as ComponentType<AnyProps>,
   FilingExcerpt: FilingExcerpt as ComponentType<AnyProps>,

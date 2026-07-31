@@ -194,7 +194,7 @@ This embeds each filing in batches with retry/backoff on rate limits. For large 
 - **In-chat PDF upload:** the `POST /api/v1/documents/upload` backend endpoint exists; a frontend upload control that auto-triggers analysis after upload has been designed but not yet confirmed wired end-to-end.
 - **Ingestion resumability:** the seed script retries within a batch on failure, but does not currently skip already-completed documents on a re-run — a killed run needs to be restarted from the top (or resumed manually by editing the PDF list).
 - **DB connection resilience:** no `pool_pre_ping`/`pool_recycle` configured yet — worth adding given Neon's scale-to-zero behavior, but not yet done.
-- **`MetricCard` / `ComparisonTable` components:** intentionally cut from MVP scope — only `PriceChart`, `AgentTrace`, and `FilingExcerpt` are implemented, to keep the generative-UI registry pattern's surface area small.
+- **`MetricCard` / `ComparisonTable` components:** intentionally cut from MVP scope. The generative-UI registry currently implements `StockOverview`, `ResearchCard`, `MarketBrief`, `PriceChart`, `AgentTrace`, and `FilingExcerpt`.
 - **Auth:** none — public demo, zero login friction, by design for this phase.
 
 ---
