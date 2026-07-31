@@ -94,7 +94,7 @@ export function useChat() {
 
     try {
     await streamChat(
-      threadIdRef.current,
+      threadId,
       content,
       {
         onEvent: (event: SSEEvent) => {
