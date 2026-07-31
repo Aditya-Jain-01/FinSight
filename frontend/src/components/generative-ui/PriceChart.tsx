@@ -11,7 +11,9 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-export function PriceChart({ ticker, currency = "INR", current_price, as_of, period, history }: PriceChartProps) {
+export function PriceChart({ ticker, currency = "INR", current_price: initial_price, as_of: initial_as_of, period, history }: PriceChartProps) {
+  const currentPrice = initial_price;
+  const lastUpdate = initial_as_of ? new Date(initial_as_of).getTime() : null;
   if (!history || history.length === 0) return null;
 
   const firstClose = history[0].close;
@@ -39,16 +41,16 @@ export function PriceChart({ ticker, currency = "INR", current_price, as_of, per
             </span>
             <span className="text-xs font-medium text-text-secondary uppercase tracking-wider">{period}</span>
           </div>
-          {as_of && (
+          {lastUpdate && (
             <div className="text-[10px] text-text-muted mb-3 font-mono">
-              As of: {new Date(as_of).toLocaleString(locale, {
-                month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short"
+              As of: {new Date(lastUpdate).toLocaleString(locale, {
+                month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short"
               })}
             </div>
           )}
           <div className="flex items-baseline gap-3">
-            <span className="figure text-3xl font-semibold text-text-primary tracking-tight">
-              {formatPrice(current_price)}
+            <span className="figure text-3xl font-semibold text-text-primary tracking-tight transition-colors duration-300">
+              {formatPrice(currentPrice)}
             </span>
             <span
               className={`figure text-sm font-medium ${

@@ -32,22 +32,24 @@ export function useChat() {
   const threadIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  const getOrCreateThread = useCallback(async () => {
+    if (threadIdRef.current) return threadIdRef.current;
+    
+    try {
+      const { thread_id } = await createThread();
+      threadIdRef.current = thread_id;
+      return thread_id;
+    } catch (err) {
+      setError("Failed to connect to the server. Is the backend running?");
+      setStage("error");
+      throw err;
+    }
+  }, []);
+
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim()) return;
 
     setError(null);
-
-    // Create thread on first message
-    if (!threadIdRef.current) {
-      try {
-        const { thread_id } = await createThread();
-        threadIdRef.current = thread_id;
-      } catch (err) {
-        setError("Failed to connect to the server. Is the backend running?");
-        setStage("error");
-        return;
-      }
-    }
 
     // Add user message
     const userMsg: ChatMessage = {
@@ -78,6 +80,14 @@ export function useChat() {
     }
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // Create thread on first message if needed (after updating UI)
+    let threadId;
+    try {
+      threadId = await getOrCreateThread();
+    } catch (e) {
+      return;
+    }
 
     const accumulatedTrace: ToolCallEntry[] = [];
     const accumulatedBlocks: unknown[] = [];
@@ -121,7 +131,39 @@ export function useChat() {
               });
               break;
             }
+            case "token_delta": {
+              // Real streaming: accumulate token chunks from the responder LLM
+              setStage("responding");
+              const data = event.data as { text: string };
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant") {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    stage: "responding",
+                    content: last.content + data.text,  // ACCUMULATE, not replace
+                  };
+                }
+                return updated;
+              });
+              break;
+            }
+            case "token_done": {
+              // Final text — replace to ensure consistency (no dropped chunks)
+              const data = event.data as { text: string };
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, content: data.text };
+                }
+                return updated;
+              });
+              break;
+            }
             case "token": {
+              // Planner direct answers — full text in one shot, no streaming
               setStage("responding");
               const data = event.data as { text: string };
               setMessages((prev) => {
@@ -239,12 +281,19 @@ export function useChat() {
     setStage("idle");
   }, []);
 
+  const addLocalMessage = useCallback((msg: ChatMessage) => {
+    setMessages((prev) => [...prev, msg]);
+  }, []);
+
   return {
     messages,
     stage,
     error,
     sendMessage,
+    addLocalMessage,
     retry,
+    getOrCreateThread,
+    threadId: threadIdRef.current,
     isStreaming: stage !== "idle" && stage !== "error",
   };
 }

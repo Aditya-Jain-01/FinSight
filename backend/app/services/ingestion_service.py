@@ -14,34 +14,20 @@ import asyncio
 import logging
 import re
 import time
+import hashlib
 from pathlib import Path
 
 import pdfplumber
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.document import Document, DocumentChunk
+from app.models.document import Document, DocumentChunk, DocumentThread
+from app.services.progress_bus import publish
 
 logger = logging.getLogger(__name__)
-
-_COMMON_WORDS = {
-    "the", "and", "of", "to", "in", "a", "is", "for", "on", "that", "with",
-    "as", "by", "this", "are", "at", "be", "or", "from", "was", "has", "have",
-}
-
-def _is_low_quality_chunk(text: str, min_words: int = 15, min_common_ratio: float = 0.04) -> bool:
-    """Drops running headers/footers and garbled-extraction chunks before they
-    get embedded and surfaced as citations."""
-    words = re.findall(r"[a-zA-Z']+", text.lower())
-    if len(words) < min_words:
-        return True  # too short — likely just a page header/footer
-    common_hits = sum(1 for w in words if w in _COMMON_WORDS)
-    if (common_hits / max(1, len(words))) < min_common_ratio:
-        return True  # almost no common English words — likely reversed/garbled text
-    return False
 
 # ---------------------------------------------------------------------------
 # Embedding model — BAAI/bge-base-en-v1.5
@@ -256,12 +242,10 @@ async def _embed_batch_with_retry(
 # ===== DEDUPLICATION =====
 
 async def _find_existing_document(
-    session: AsyncSession, title: str, ticker: str | None
+    session: AsyncSession, content_hash: str
 ) -> Document | None:
-    """Check if a document with the same title already exists."""
-    stmt = select(Document).where(Document.title == title)
-    if ticker is not None:
-        stmt = stmt.where(Document.ticker == ticker)
+    """Check if a document with the same content hash already exists."""
+    stmt = select(Document).where(Document.content_hash == content_hash)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -273,9 +257,11 @@ async def ingest_document(
     *,
     file_path: str | Path | None = None,
     file_bytes: bytes | None = None,
+    thread_id: str | None = None,
     ticker: str | None = None,
     title: str | None = None,
     source: str = "seed",
+    document: Document | None = None,
 ) -> Document:
     """Ingest a PDF document: extract → filter → chunk → embed → store.
 
@@ -284,7 +270,7 @@ async def ingest_document(
     - Rate-limit-aware batching (30 chunks/batch, 15s interval, exponential backoff)
     - Per-batch failure tolerance (partial ingestion over total failure)
     - Deduplication (skips ready docs, re-ingests failed/partial/processing ones)
-    - Status lifecycle: processing → ready | partial | error
+    - Status lifecycle: processing → ready | partial | error | cancelled
 
     Args:
         session: SQLAlchemy async session
@@ -294,169 +280,265 @@ async def ingest_document(
         title: Document title
         source: 'seed' or 'upload'
 
+    Args:
+        document: Pre-created Document row (for fire-and-forget upload endpoint).
+                  When provided, skips Document creation and deduplication.
+
     Returns:
         The Document record (created or updated)
     """
     resolved_title = title or (Path(file_path).stem if file_path else "Uploaded document")
 
-    # --- Deduplication check ---
-    existing = await _find_existing_document(session, resolved_title, ticker)
-    if existing:
-        if existing.status == "ready":
-            print(f"  ⏭️  Already ingested (status=ready, {existing.chunk_count} chunks). Skipping.")
-            return existing
+    # --- Pre-created Document (fire-and-forget upload path) ---
+    if document is not None:
+        doc = document
+        # Skip hash computation and dedup — caller already handled it
+        content_hash = doc.content_hash
+    else:
+        # --- Hash computation ---
+        if file_path:
+            with open(file_path, "rb") as f:
+                file_bytes_for_hash = f.read()
+        elif file_bytes:
+            file_bytes_for_hash = file_bytes
         else:
-            # Re-ingest: delete old chunks and reset the document row
-            print(f"  🔄 Found previous attempt (status={existing.status}). Clearing chunks and re-ingesting...")
-            await session.execute(
-                delete(DocumentChunk).where(DocumentChunk.document_id == existing.id)
+            raise ValueError("Either file_path or file_bytes must be provided")
+            
+        content_hash = hashlib.sha256(file_bytes_for_hash).hexdigest()
+
+        # --- Deduplication check ---
+        existing = await _find_existing_document(session, content_hash)
+        if existing:
+            if existing.status == "ready":
+                print(f"  ⏭️  Already ingested (status=ready, {existing.chunk_count} chunks). Linking to thread and skipping.")
+                if thread_id:
+                    # Link existing document to current thread if not already linked
+                    dt_exists = await session.scalar(
+                        select(func.count()).where(
+                            DocumentThread.document_id == existing.id,
+                            DocumentThread.thread_id == thread_id
+                        )
+                    )
+                    if not dt_exists:
+                        session.add(DocumentThread(document_id=existing.id, thread_id=thread_id))
+                        await session.commit()
+                await publish(existing.id, {"phase": "complete", "status": "ready", "chunk_count": existing.chunk_count, "total_chunks": existing.chunk_count})
+                return existing
+            else:
+                # Re-ingest: delete old chunks and reset the document row
+                print(f"  🔄 Found previous attempt (status={existing.status}). Clearing chunks and re-ingesting...")
+                await session.execute(
+                    delete(DocumentChunk).where(DocumentChunk.document_id == existing.id)
+                )
+                existing.status = "processing"
+                existing.chunk_count = 0
+                existing.ticker = ticker  # Update in case ticker changed
+                existing.title = resolved_title
+                await session.commit()
+                doc = existing
+                
+                # Ensure it is linked to the current thread
+                if thread_id:
+                    dt_exists = await session.scalar(
+                        select(func.count()).where(
+                            DocumentThread.document_id == existing.id,
+                            DocumentThread.thread_id == thread_id
+                        )
+                    )
+                    if not dt_exists:
+                        session.add(DocumentThread(document_id=existing.id, thread_id=thread_id))
+                        await session.commit()
+        else:
+            doc = None
+
+    # --- Pipeline body wrapped in try/except for CancelledError cleanup ---
+    try:
+        # --- 1. Extract text ---
+        print(f"  📖 Extracting text...")
+        if doc:
+            await publish(doc.id, {"phase": "extracting"})
+        if file_path:
+            pages = extract_pages_from_pdf(file_path)
+        elif file_bytes:
+            pages = extract_pages_from_bytes(file_bytes)
+        else:
+            raise ValueError("Either file_path or file_bytes must be provided")
+
+        if not pages:
+            if doc:
+                doc.status = "error"
+                doc.doc_metadata = {**(doc.doc_metadata or {}), "error": "No text extracted"}
+                await session.commit()
+                await publish(doc.id, {"phase": "complete", "status": "error", "error": "No text extracted", "chunk_count": 0, "total_chunks": 0})
+            raise ValueError("No text could be extracted from the PDF. Is it a scanned/image-only PDF?")
+
+        total_chars_raw = sum(len(p) for p in pages)
+        print(f"  📄 Extracted {len(pages)} pages ({total_chars_raw:,} chars)")
+
+        # --- 2. Filter relevant sections ---
+        filtered_pages, filter_meta = filter_relevant_pages(pages)
+        filter_path = filter_meta["filter_path"]
+
+        if filter_path == "pages_filtered":
+            filtered_chars = filter_meta["filtered_chars"]
+            reduction = filter_meta["reduction_pct"]
+            print(f"  🔍 Filtered to {len(filtered_pages)}/{len(pages)} pages ({filtered_chars:,} chars, {reduction}% reduction)")
+            keywords_found = filter_meta.get("matched_keywords", [])
+            if keywords_found:
+                print(f"     Matched: {', '.join(keywords_found[:10])}")
+        else:
+            print(f"  🔍 No section keywords matched — using full text ({total_chars_raw:,} chars)")
+
+        if doc:
+            await publish(doc.id, {
+                "phase": "filtering",
+                "total_pages": len(pages),
+                "relevant_pages": len(filtered_pages),
+                "reduction_pct": filter_meta.get("reduction_pct", 0),
+            })
+
+        raw_text = "\n\n".join(filtered_pages)
+
+        # --- 3. Chunk ---
+        chunks = chunk_text(raw_text)
+        if not chunks:
+            if doc:
+                doc.status = "error"
+                doc.doc_metadata = {**(doc.doc_metadata or {}), "error": "No chunks created"}
+                await session.commit()
+                await publish(doc.id, {"phase": "complete", "status": "error", "error": "No chunks created", "chunk_count": 0, "total_chunks": 0})
+            raise ValueError("Text was extracted but no chunks were created")
+        print(f"  ✂️  Created {len(chunks)} chunks")
+
+        if doc:
+            await publish(doc.id, {"phase": "chunking", "total_chunks": len(chunks)})
+
+        # --- 4. Create Document record (if new) ---
+        if doc is None:
+            doc = Document(
+                source=source,
+                ticker=ticker,
+                title=resolved_title,
+                content_hash=content_hash,
+                status="processing",
+                chunk_count=0,
+                doc_metadata={
+                    "raw_pages": len(pages),
+                    "raw_chars": total_chars_raw,
+                    "filter": filter_meta,
+                },
             )
-            existing.status = "processing"
-            existing.chunk_count = 0
-            existing.ticker = ticker  # Update in case ticker changed
+            session.add(doc)
+            await session.flush()  # Get doc.id
+            
+            if thread_id:
+                session.add(DocumentThread(document_id=doc.id, thread_id=thread_id))
+                
             await session.commit()
-            doc = existing
-    else:
-        doc = None
-
-    # --- 1. Extract text ---
-    print(f"  📖 Extracting text...")
-    if file_path:
-        pages = extract_pages_from_pdf(file_path)
-    elif file_bytes:
-        pages = extract_pages_from_bytes(file_bytes)
-    else:
-        raise ValueError("Either file_path or file_bytes must be provided")
-
-    if not pages:
-        if doc:
-            doc.status = "error"
-            doc.doc_metadata = {**(doc.doc_metadata or {}), "error": "No text extracted"}
-            await session.commit()
-        raise ValueError("No text could be extracted from the PDF. Is it a scanned/image-only PDF?")
-
-    total_chars_raw = sum(len(p) for p in pages)
-    print(f"  📄 Extracted {len(pages)} pages ({total_chars_raw:,} chars)")
-
-    # --- 2. Filter relevant sections ---
-    filtered_pages, filter_meta = filter_relevant_pages(pages)
-    filter_path = filter_meta["filter_path"]
-
-    if filter_path == "pages_filtered":
-        filtered_chars = filter_meta["filtered_chars"]
-        reduction = filter_meta["reduction_pct"]
-        print(f"  🔍 Filtered to {len(filtered_pages)}/{len(pages)} pages ({filtered_chars:,} chars, {reduction}% reduction)")
-        keywords_found = filter_meta.get("matched_keywords", [])
-        if keywords_found:
-            print(f"     Matched: {', '.join(keywords_found[:10])}")
-    else:
-        print(f"  🔍 No section keywords matched — using full text ({total_chars_raw:,} chars)")
-
-    raw_text = "\n\n".join(filtered_pages)
-
-    # --- 3. Chunk ---
-    raw_chunks = chunk_text(raw_text)
-    chunks = [c for c in raw_chunks if not _is_low_quality_chunk(c["content"])]
-    dropped = len(raw_chunks) - len(chunks)
-    if dropped:
-        print(f"  🧹 Dropped {dropped} low-quality chunks (headers/footers/garbled text)")
-
-    if not chunks:
-        if doc:
-            doc.status = "error"
-            doc.doc_metadata = {**(doc.doc_metadata or {}), "error": "No chunks created"}
-            await session.commit()
-        raise ValueError("Text was extracted but no chunks were created")
-    print(f"  ✂️  Created {len(chunks)} chunks")
-
-    # --- 4. Create Document record (if new) ---
-    if doc is None:
-        doc = Document(
-            source=source,
-            ticker=ticker,
-            title=resolved_title,
-            status="processing",
-            chunk_count=0,
-            doc_metadata={
+        else:
+            # Update metadata on existing document
+            doc.doc_metadata = {
+                **(doc.doc_metadata or {}),
                 "raw_pages": len(pages),
                 "raw_chars": total_chars_raw,
                 "filter": filter_meta,
-            },
-        )
-        session.add(doc)
-        await session.flush()  # Get doc.id
-        await session.commit()
-    else:
-        # Update metadata on existing document
+            }
+            await session.commit()
+
+        # --- 5. Embed and store chunks in batches ---
+        texts = [c["content"] for c in chunks]
+        total_batches = (len(texts) + _EMBED_BATCH_SIZE - 1) // _EMBED_BATCH_SIZE
+
+        embedded_count = 0
+        failed_count = 0
+
+        est_seconds = total_batches * _MIN_INTERVAL_SECONDS
+        print(f"  🧠 Embedding {len(texts)} chunks in {total_batches} batches "
+              f"(size={_EMBED_BATCH_SIZE}, interval={_MIN_INTERVAL_SECONDS}s, est. {est_seconds:.0f}s)...")
+
+        for batch_idx in range(total_batches):
+            start = batch_idx * _EMBED_BATCH_SIZE
+            end = min(start + _EMBED_BATCH_SIZE, len(texts))
+            batch_texts = texts[start:end]
+            batch_chunks = chunks[start:end]
+            batch_num = batch_idx + 1
+
+            print(f"  📡 Batch {batch_num}/{total_batches} (chunks {start + 1}–{end})...", end=" ", flush=True)
+
+            vectors = await _embed_batch_with_retry(batch_texts, batch_num, total_batches)
+
+            if vectors is None:
+                failed_count += len(batch_texts)
+                print(f"FAILED ({len(batch_texts)} chunks lost)")
+                if doc:
+                    await publish(doc.id, {
+                        "phase": "embedding", "chunk_count": embedded_count,
+                        "total_chunks": len(chunks), "batch": batch_num,
+                        "total_batches": total_batches, "batch_failed": True,
+                    })
+                continue
+
+            # Store this batch's chunks immediately
+            for chunk_data, embedding in zip(batch_chunks, vectors):
+                chunk_obj = DocumentChunk(
+                    document_id=doc.id,
+                    chunk_index=chunk_data["chunk_index"],
+                    content=chunk_data["content"],
+                    section_title=chunk_data["section_title"],
+                    embedding=embedding,
+                    chunk_metadata={"char_count": len(chunk_data["content"])},
+                )
+                session.add(chunk_obj)
+
+            await session.commit()  # Persist each batch so progress is never lost
+            embedded_count += len(batch_texts)
+            print(f"✅ ({embedded_count}/{len(texts)} total)")
+
+            if doc:
+                await publish(doc.id, {
+                    "phase": "embedding", "chunk_count": embedded_count,
+                    "total_chunks": len(chunks), "batch": batch_num,
+                    "total_batches": total_batches,
+                })
+
+        # --- 6. Update document status ---
+        doc.chunk_count = embedded_count
         doc.doc_metadata = {
             **(doc.doc_metadata or {}),
-            "raw_pages": len(pages),
-            "raw_chars": total_chars_raw,
-            "filter": filter_meta,
+            "embedded_count": embedded_count,
+            "failed_count": failed_count,
+            "total_chunks": len(chunks),
         }
+
+        if failed_count == 0:
+            doc.status = "ready"
+            print(f"  ✅ Document ready: {embedded_count} chunks embedded")
+        elif embedded_count > 0:
+            doc.status = "partial"
+            print(f"  ⚠️  Partial: {embedded_count}/{len(chunks)} chunks embedded, {failed_count} failed")
+        else:
+            doc.status = "error"
+            print(f"  ❌ Error: all {failed_count} chunks failed to embed")
+
         await session.commit()
 
-    # --- 5. Embed and store chunks in batches ---
-    texts = [c["content"] for c in chunks]
-    total_batches = (len(texts) + _EMBED_BATCH_SIZE - 1) // _EMBED_BATCH_SIZE
+        if doc:
+            await publish(doc.id, {
+                "phase": "complete", "status": doc.status,
+                "chunk_count": embedded_count, "total_chunks": len(chunks),
+            })
 
-    embedded_count = 0
-    failed_count = 0
+        return doc
 
-    est_seconds = total_batches * _MIN_INTERVAL_SECONDS
-    print(f"  🧠 Embedding {len(texts)} chunks in {total_batches} batches "
-          f"(size={_EMBED_BATCH_SIZE}, interval={_MIN_INTERVAL_SECONDS}s, est. {est_seconds:.0f}s)...")
-
-    for batch_idx in range(total_batches):
-        start = batch_idx * _EMBED_BATCH_SIZE
-        end = min(start + _EMBED_BATCH_SIZE, len(texts))
-        batch_texts = texts[start:end]
-        batch_chunks = chunks[start:end]
-        batch_num = batch_idx + 1
-
-        print(f"  📡 Batch {batch_num}/{total_batches} (chunks {start + 1}–{end})...", end=" ", flush=True)
-
-        vectors = await _embed_batch_with_retry(batch_texts, batch_num, total_batches)
-
-        if vectors is None:
-            failed_count += len(batch_texts)
-            print(f"FAILED ({len(batch_texts)} chunks lost)")
-            continue
-
-        # Store this batch's chunks immediately
-        for chunk_data, embedding in zip(batch_chunks, vectors):
-            chunk_obj = DocumentChunk(
-                document_id=doc.id,
-                chunk_index=chunk_data["chunk_index"],
-                content=chunk_data["content"],
-                section_title=chunk_data["section_title"],
-                embedding=embedding,
-                chunk_metadata={"char_count": len(chunk_data["content"])},
+    except asyncio.CancelledError:
+        # Ingestion was cancelled (WS disconnect or explicit cancel)
+        if doc:
+            logger.info("Ingestion cancelled for document %s, cleaning up", doc.id)
+            await session.execute(
+                delete(DocumentChunk).where(DocumentChunk.document_id == doc.id)
             )
-            session.add(chunk_obj)
-
-        await session.commit()  # Persist each batch so progress is never lost
-        embedded_count += len(batch_texts)
-        print(f"✅ ({embedded_count}/{len(texts)} total)")
-
-    # --- 6. Update document status ---
-    doc.chunk_count = embedded_count
-    doc.doc_metadata = {
-        **(doc.doc_metadata or {}),
-        "embedded_count": embedded_count,
-        "failed_count": failed_count,
-        "total_chunks": len(chunks),
-    }
-
-    if failed_count == 0:
-        doc.status = "ready"
-        print(f"  ✅ Document ready: {embedded_count} chunks embedded")
-    elif embedded_count > 0:
-        doc.status = "partial"
-        print(f"  ⚠️  Partial: {embedded_count}/{len(chunks)} chunks embedded, {failed_count} failed")
-    else:
-        doc.status = "error"
-        print(f"  ❌ Error: all {failed_count} chunks failed to embed")
-
-    await session.commit()
-    return doc
+            doc.status = "cancelled"
+            doc.chunk_count = 0
+            await session.commit()
+            await publish(doc.id, {"phase": "complete", "status": "cancelled"})
+        raise  # Re-raise so the Task is properly marked cancelled

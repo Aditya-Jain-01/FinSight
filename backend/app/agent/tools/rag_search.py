@@ -15,14 +15,23 @@ _embeddings = HuggingFaceEndpointEmbeddings(
 )
 
 
-@tool
-async def rag_search(query: str, ticker: str | None = None, top_k: int = 3) -> dict:
-    """Search seeded financial documents (annual reports, filings) for information
-    relevant to the query. Returns the top matching excerpts with citations.
+from langchain_core.tools import InjectedToolArg
+from typing import Annotated
 
-    Use this tool when the user asks about information that would be in a company's
-    annual report, filing, or other financial document — e.g. capex plans, revenue
-    breakdown, management commentary, risk factors, strategic initiatives.
+@tool
+async def rag_search(
+    query: str, 
+    ticker: str | None = None, 
+    top_k: int = 3, 
+    thread_id: Annotated[str, InjectedToolArg] = None
+) -> dict:
+    """Search documents available in this conversation for relevant information.
+    
+    If the user has uploaded a PDF in this thread, this searches THEIR document
+    directly — no ticker or company name is required when the user refers to
+    'the pdf', 'the document', 'the report', or similar, since it's scoped to
+    this conversation automatically. Only pass a ticker if the user is asking
+    about a specific seeded/demo company's filing instead of their own upload.
 
     Args:
         query: The search query describing what information to find
@@ -33,11 +42,7 @@ async def rag_search(query: str, ticker: str | None = None, top_k: int = 3) -> d
     query_embedding = await _embeddings.aembed_query(query)
 
     # 2. Build the SQL query with cosine similarity
-    # Using raw SQL for the pgvector distance operator
     async with async_session_maker() as session:
-        # Base query: join chunks with documents, compute cosine distance
-        # NOTE: using CAST(:embedding AS vector) instead of :embedding::vector
-        # because SQLAlchemy's text() interprets :: as a parameter delimiter
         if ticker:
             result = await session.execute(
                 text("""
@@ -51,8 +56,10 @@ async def rag_search(query: str, ticker: str | None = None, top_k: int = 3) -> d
                         1 - (dc.embedding <=> CAST(:embedding AS vector)) AS similarity
                     FROM document_chunks dc
                     JOIN documents d ON dc.document_id = d.id
+                    JOIN document_threads dt ON dt.document_id = d.id
                     WHERE d.ticker = :ticker
                       AND d.status IN ('ready', 'partial')
+                      AND dt.thread_id = CAST(:thread_id AS UUID)
                     ORDER BY dc.embedding <=> CAST(:embedding AS vector)
                     LIMIT :top_k
                 """),
@@ -60,6 +67,7 @@ async def rag_search(query: str, ticker: str | None = None, top_k: int = 3) -> d
                     "embedding": str(query_embedding),
                     "ticker": ticker,
                     "top_k": top_k,
+                    "thread_id": thread_id,
                 },
             )
         else:
@@ -75,13 +83,16 @@ async def rag_search(query: str, ticker: str | None = None, top_k: int = 3) -> d
                         1 - (dc.embedding <=> CAST(:embedding AS vector)) AS similarity
                     FROM document_chunks dc
                     JOIN documents d ON dc.document_id = d.id
+                    JOIN document_threads dt ON dt.document_id = d.id
                     WHERE d.status IN ('ready', 'partial')
+                      AND dt.thread_id = CAST(:thread_id AS UUID)
                     ORDER BY dc.embedding <=> CAST(:embedding AS vector)
                     LIMIT :top_k
                 """),
                 {
                     "embedding": str(query_embedding),
                     "top_k": top_k,
+                    "thread_id": thread_id,
                 },
             )
 

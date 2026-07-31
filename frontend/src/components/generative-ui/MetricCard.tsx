@@ -15,7 +15,13 @@ function formatMetric(value: number | null, format: Metric['format'], currency: 
 
 export function MetricCard({ ticker, currency, metrics }: { ticker: string; currency: string; metrics: Metric[] }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 8 }} className="animate-slide-up my-4">
+    <div className="animate-slide-up my-4">
+      {ticker && (
+        <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2">
+          {ticker} Financials
+        </h4>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
       {metrics.map((m) => (
         <div key={m.label} style={{ background: 'var(--bg-panel-muted)', borderRadius: 8, padding: '8px 10px', border: '1px solid var(--border)' }}>
           <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{m.label}</div>
@@ -24,6 +30,7 @@ export function MetricCard({ ticker, currency, metrics }: { ticker: string; curr
           </div>
         </div>
       ))}
+      </div>
     </div>
   );
 }

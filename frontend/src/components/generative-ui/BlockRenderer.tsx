@@ -5,6 +5,7 @@ import { getComponent } from "./registry";
 
 interface BlockRendererProps {
   block: unknown;
+  isLatestStockOverview?: boolean;
 }
 
 /**
@@ -16,7 +17,7 @@ interface BlockRendererProps {
  * _build_ui_blocks function constructs it deterministically from tool
  * output. Zod validation here is a safety net, not a primary defense.
  */
-export function BlockRenderer({ block }: BlockRendererProps) {
+export function BlockRenderer({ block, isLatestStockOverview }: BlockRendererProps) {
   const parsed = UIBlockSchema.safeParse(block);
 
   if (!parsed.success) {
@@ -37,9 +38,14 @@ export function BlockRenderer({ block }: BlockRendererProps) {
     return null;
   }
 
+  // Pass isLatest to StockOverview only
+  const componentProps = component === "StockOverview"
+    ? { ...props, isLatest: isLatestStockOverview }
+    : props;
+
   return (
     <div className="mt-3">
-      <Component {...props} />
+      <Component {...componentProps} />
     </div>
   );
 }

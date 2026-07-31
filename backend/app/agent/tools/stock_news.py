@@ -17,6 +17,7 @@ def get_stock_news(ticker: str, limit: int = 5) -> dict:
             "title": (n.get("content") or {}).get("title") or n.get("title"),
             "publisher": ((n.get("content") or {}).get("provider") or {}).get("displayName") or n.get("publisher"),
             "link": ((n.get("content") or {}).get("canonicalUrl") or {}).get("url") or n.get("link"),
+            "timestamp": (n.get("content") or {}).get("pubDate") or n.get("providerPublishTime") or n.get("pubDate"),
         }
         for n in news[:limit]
     ]

@@ -1,136 +1,154 @@
-# FinSight: Agentic Financial Research Platform
+# FinSight
 
-FinSight is a powerful, AI-driven financial research assistant built with a modern LangGraph agent architecture. It is designed to analyze Indian and US stock markets, combining live market data (via `yfinance`) with deep qualitative analysis (RAG over annual reports) into a single, seamless, streaming chat interface.
+An agentic financial research assistant covering US and Indian stock markets — a hand-built LangGraph agent (not a prebuilt chain) combining live market data with cited retrieval over real annual reports, streamed to a chat interface.
+
+🔗 **Live demo:** _add your Vercel URL here_
+🔗 **API health check:** _add your Render URL here_ `/api/v1/health`
+
+> **Status:** Backend (agent, tools, RAG pipeline, streaming API) is built and verified end-to-end. Frontend is specced; see [Known Limitations](#known-limitations--not-yet-implemented) for current implementation status.
 
 ---
 
-## 🏗 Architecture
+## Architecture
 
 ### 1. The Agent (LangGraph)
-The core of FinSight is a multi-node LangGraph agent designed to prevent hallucination and improve reasoning:
-- **Planner Node**: Interprets user intent, handles ticker normalization (.NS for India), and orchestrates tool calls. It does *not* write the final response.
-- **Tool Execution**: Resolves live API calls and vector database searches.
-- **Responder Node**: Synthesizes the raw tool outputs into a polished, financial analyst-style prose response. It guarantees that any numbers cited come directly from the tools.
 
-### 2. Live Data & RAG
-- **Live Market Data**: Integrates with Yahoo Finance to pull real-time stock prices, P/E ratios, EPS, market caps, and 52-week highs/lows.
-- **RAG Pipeline (Retrieval-Augmented Generation)**:
-  - Supports large PDF annual reports and filings.
-  - **Smart Filtering**: Pre-filters pages based on financial keywords (e.g., "Management Discussion", "Capex", "Risk Factors") to drop boilerplate and reduce embedding costs by ~70%.
-  - **Embeddings**: Uses HuggingFace's Inference API (`BAAI/bge-base-en-v1.5`) to map chunks into 768-dimensional vectors.
-  - **Vector DB**: PostgreSQL with `pgvector` hosted on Neon Serverless Postgres.
+A 3-node graph, written from scratch — not `create_react_agent` or a prebuilt `AgentExecutor`:
 
-### 3. Real-Time Streaming
-- **Backend (FastAPI)**: Uses a custom Server-Sent Events (SSE) protocol to stream intermediate state.
-- **Frontend (Next.js)**: Consumes the SSE stream to display live tool-call badges (e.g., "Fetching TCS financials..."), rich UI components (Metric Cards, Filing Excerpts), and streaming prose simultaneously.
+- **Planner** — decides which tools to call, normalizes tickers (`.NS`/`.BO` for Indian exchanges, no suffix for US tickers)
+- **Tool Executor** — runs the planner's tool calls, catches per-tool failures into an `error` field instead of crashing the graph
+- **Responder** — writes the final prose from tool outputs only; the LLM never writes UI JSON, deterministic Python code builds the `ui_block` payloads from tool results
 
----
+### 2. Live Market Data
 
-## 🚀 Tech Stack
+Four tools, all backed by `yfinance`, covering both markets:
+- `get_stock_price` — current price + historical closes
+- `get_financials` — P/E, market cap, EPS, dividend yield, 52-week high/low
+- `get_company_info` — sector, industry, business summary
+- `get_stock_news` — recent headlines
 
-**Frontend:**
-- Next.js 15 (React 19)
-- TailwindCSS (Premium, whitespace-heavy editorial design)
-- Custom SSE client (`src/lib/sse.ts`)
+### 3. RAG Pipeline
 
-**Backend:**
-- FastAPI & Uvicorn
-- LangGraph & LangChain
-- Groq (LLM provider)
-- HuggingFace (Embeddings provider)
-- PostgreSQL (Neon) with `pgvector` & SQLAlchemy
-- Alembic (Migrations)
-- `pdfplumber` (Document extraction)
+- PDF ingestion via `pdfplumber`, chunked with `RecursiveCharacterTextSplitter`
+- **Keyword pre-filtering** — drops pages that don't match financial-relevance terms (e.g. "management discussion," "risk factors," "capex") before chunking. Actual reduction varies by document structure — observed 0.6%–13.5% on seeded filings; this trims boilerplate but the main cost/time savings come from batching and embedding fewer low-value pages, not a fixed universal percentage.
+- **Embeddings** — HuggingFace Inference API, `BAAI/bge-base-en-v1.5` (768-dim, matches the `vector(768)` schema exactly — ingestion and query-time embedding use the identical model, required for valid cosine similarity)
+- **Vector store** — PostgreSQL + `pgvector` on Neon, HNSW index (`vector_cosine_ops`) on `document_chunks.embedding`
+- **Rate-limit resilience** — batched embedding calls with exponential backoff/retry on 429s and transient provider errors
+
+### 4. Streaming API
+
+FastAPI + `StreamingResponse` over SSE. Each chat turn emits, in order: `status` (planning started) → zero or more `tool_call` events → `token` (complete prose, not word-streamed) → zero or more `ui_block` events → `done`. The streaming endpoint opens its own DB session directly via `async_session_maker` rather than FastAPI's `Depends(get_db)`, since the latter tears down before a `StreamingResponse` finishes sending.
 
 ---
 
-## 🛠 Setup & Installation
+## Tech Stack
+
+**Backend (implemented & tested):**
+- FastAPI + Uvicorn
+- LangGraph + LangChain (model/tool/embedding wrappers only — planner logic, tool selection, and UI-block construction are hand-written)
+- Groq (`llama-3.3-70b-versatile`) — chat/agent LLM
+- HuggingFace Inference API (`BAAI/bge-base-en-v1.5`) — embeddings
+- PostgreSQL (Neon) + `pgvector` + SQLAlchemy (async) + Alembic
+- `pdfplumber` — PDF text extraction
+
+**Frontend (spec complete, see status note above):**
+- Next.js (App Router) + TypeScript + Tailwind — planned
+- `recharts` for `PriceChart`, Zod-validated `ui_block` discriminated union
+
+---
+
+## Setup & Installation
 
 ### Prerequisites
-- Node.js (v18+)
 - Python 3.10+
-- A [Neon Postgres](https://neon.tech/) database URL.
-- API Keys for **Groq** and **HuggingFace**.
+- A [Neon Postgres](https://neon.tech/) database with the `vector` extension enabled
+- API keys: [Groq](https://console.groq.com/keys) and [HuggingFace](https://huggingface.co/settings/tokens) (Inference-scoped token — the plain "Read" preset is **not** sufficient; use the "Inference" preset or a fine-grained token with "Make calls to Inference Providers" enabled)
 
-### 1. Backend Setup
+### Backend
+
 ```bash
 cd backend
 python -m venv venv
-# Windows: .\venv\Scripts\activate
+# Windows: .\venv\Scripts\Activate.ps1
 # Mac/Linux: source venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the `backend/` directory:
+Create `backend/.env`:
 ```env
 DATABASE_URL=postgresql://user:pass@ep-host.aws.neon.tech/neondb?sslmode=require
 GROQ_API_KEY=gsk_your_groq_key
 HUGGINGFACE_API_KEY=hf_your_hf_key
 ```
 
-Run database migrations to initialize tables and `pgvector`:
+Run migrations:
 ```bash
 alembic upgrade head
 ```
 
-### 2. Frontend Setup
+Start the server:
 ```bash
-cd frontend
-npm install
-```
-
-*(No `.env` is strictly required for the frontend if running locally on port 3000, as it defaults to `http://localhost:8000`)*.
-
----
-
-## 🏃‍♂️ Running the Application
-
-Start the backend:
-```bash
-cd backend
 uvicorn app.main:app --reload
 ```
 
-Start the frontend:
+### Verifying the backend works
+
 ```bash
-cd frontend
-npm run dev
+curl -s -X POST http://localhost:8000/api/v1/threads
+# then, using the returned thread_id:
+curl -N -X POST http://localhost:8000/api/v1/threads/{thread_id}/messages \
+  -H "Content-Type: application/json" \
+  -d '{"content": "What is Apple'\''s current stock price?"}'
 ```
-Navigate to `http://localhost:3000` to use the application.
+Expect a stream ending in `event: done`, with a `PriceChart` `ui_block` containing real fetched data.
 
 ---
 
-## 📚 Seeding the RAG Database
+## Seeding the RAG Database
 
-To chat about company-specific strategic insights, you must first ingest their annual reports.
-
-1. Place PDF reports in a directory (e.g., `seed_filings/`).
-2. Run the ingestion script:
+1. Place PDF annual reports in `seed_filings/` (repo root)
+2. Run:
 ```bash
 cd backend
 python -m scripts.seed_documents
 ```
 
-**Features of the ingestion script:**
-- **Rate-limit resilient**: Automatically batches requests and uses exponential backoff.
-- **Idempotent**: Safe to re-run. It will skip previously completed documents and resume/retry failed ones.
-- **Optimized**: Drops pages that don't match critical financial keywords before embedding.
+This embeds each filing in batches with retry/backoff on rate limits. For large filings (300+ pages), expect this to take several minutes — the script logs per-batch progress.
+
+**Important:** if you change the embedding model or provider, existing `document_chunks` rows are in a different vector space and must be cleared before re-seeding:
+```sql
+DELETE FROM document_chunks;
+DELETE FROM documents;
+```
 
 ---
 
-## 💡 Key Design Philosophies
+## Design Decisions Worth Noting
 
-- **No Placeholders**: If the agent needs to show a metric card, it streams a tool block and the UI renders a rich React component natively, completely avoiding markdown table hallucinations.
-- **Fail Gracefully**: If a provider rate-limits or a tool fails, the agent surfaces the error cleanly in the UI and continues the conversation.
-- **Serverless-Ready**: Includes SQLAlchemy `pool_pre_ping=True` and `pool_recycle` to safely survive Neon scale-to-zero connection drops.
+- **UI generation is deterministic, not model-written.** The LLM writes prose; a Python function (`_build_ui_blocks`) inspects verified tool output and constructs the `ui_block` JSON. This was a deliberate choice to keep structured UI payloads reliable regardless of which LLM is orchestrating.
+- **Provider migration:** originally built on Gemini for both chat and embeddings. Migrated to Groq (chat) and HuggingFace (embeddings) after repeated free-tier quota/auth friction during development. The two are fully decoupled — LangChain's `bind_tools()` abstraction and the async embeddings interface meant swapping providers touched only the instantiation code, not the agent graph or ingestion logic.
+- **Model-specific formatting drift:** switching chat providers surfaced that not all models honor "no markdown" instructions equally reliably (Gemini complied consistently; Llama-3.3 via Groq occasionally leaked markdown tables/bold syntax). Mitigated with a stricter system prompt plus a server-side markdown-stripping safety net on the response text, rather than relying on prompt compliance alone.
+- **Protocol Choices & WebSockets:** The architecture relies on HTTP/SSE for chat streaming, with WebSockets deployed specifically where required for real-time capabilities or upstream integrations:
+  - **Document Ingestion:** A fully custom WebSocket implementation streams real-time progress updates during the PDF ingestion pipeline.
+  - **Finnhub Integration:** The backend-to-Finnhub connection utilizes WebSockets as a strict integration engineering requirement, as mandated by the upstream provider.
 
 ---
 
-## 🚀 Future Improvements
+## Known Limitations / Not Yet Implemented
 
-- **Deeper Fundamental Analysis**: Expand tool capabilities to retrieve and process a wider array of fundamental metrics and historical financial statements.
-- **Investment Frameworks**: Introduce multiple analysis lenses (Value, Growth, Quality, etc.) based on publicly documented investment methodologies.
-- **Advanced RAG Optimization**: Further refine ingestion for massive financial filings through even smarter section filtering, hierarchical chunking, and semantic routing.
-- **Valuation Sandbox**: Build an interactive UI module with configurable financial assumptions (WACC, terminal growth) for live, agent-assisted fair-value estimation.
-- **Market Dashboard**: Add a lightweight, cached homepage dashboard displaying real-time market indices, sector performance, and top movers.
+- **Frontend**: spec and component design complete; Next.js implementation status should be confirmed/updated here once built.
+- **In-chat PDF upload**: the `POST /api/v1/documents/upload` backend endpoint exists; a frontend upload control that auto-triggers analysis after upload has been designed but not yet confirmed wired end-to-end.
+- **Ingestion resumability**: the seed script retries within a batch on failure, but does not currently skip already-completed documents on a re-run — a killed run currently needs to be restarted from the top (or resumed manually by editing the PDF list).
+- **DB connection resilience**: no `pool_pre_ping`/`pool_recycle` configured yet — worth adding given Neon's scale-to-zero behavior, but not yet done.
+- **`MetricCard` / `ComparisonTable` components**: intentionally cut from MVP scope — only `PriceChart`, `AgentTrace`, and `FilingExcerpt` are implemented, to keep the generative-UI registry pattern's surface area small.
+- **Auth**: none — public demo, zero login friction, by design for this phase.
+
+---
+
+## Roadmap
+
+- Verifier node (rule-based numeric sanity check between tool output and response, logged into trace)
+- `MetricCard` for single-value questions (P/E, market cap)
+- Auth (Clerk) if/when moving beyond public-demo scope
+- Ingestion resumability + connection-pool hardening

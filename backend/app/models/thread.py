@@ -19,6 +19,7 @@ class Thread(Base):
     )
 
     messages: Mapped[list["Message"]] = relationship(back_populates="thread", cascade="all, delete-orphan")
+    document_threads: Mapped[list["DocumentThread"]] = relationship(cascade="all, delete-orphan")
 
 
 class Message(Base):

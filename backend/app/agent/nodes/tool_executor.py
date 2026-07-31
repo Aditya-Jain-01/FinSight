@@ -20,7 +20,13 @@ async def tool_executor_node(state):
         try:
             if tool_fn is None:
                 raise ValueError(f"Unknown tool: {call['name']}")
-            raw_result = await tool_fn.ainvoke(call["args"])
+            
+            call_args = dict(call["args"])
+            # Inject thread_id for tools that need it (like rag_search)
+            if "thread_id" in tool_fn.args:
+                call_args["thread_id"] = state.get("thread_id")
+                
+            raw_result = await tool_fn.ainvoke(call_args)
             if isinstance(raw_result, dict) and raw_result.get("error"):
                 error = raw_result["error"]
         except Exception as e:  # noqa: BLE001 — tool failures shouldn't crash the graph

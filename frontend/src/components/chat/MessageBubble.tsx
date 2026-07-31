@@ -4,10 +4,14 @@ import { useState } from "react";
 import { ChatMessage, ChatStage } from "@/hooks/useChat";
 import { BlockRenderer } from "@/components/generative-ui/BlockRenderer";
 import { AgentTrace } from "@/components/generative-ui/AgentTrace";
+import ReactMarkdown from "react-markdown";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  isLatestStockOverview?: boolean;
 }
+
+
 
 function LiveStatusIndicator({ message }: { message: ChatMessage }) {
   const stage = message.stage;
@@ -78,7 +82,7 @@ function LiveStatusIndicator({ message }: { message: ChatMessage }) {
   );
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, isLatestStockOverview }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const [showTrace, setShowTrace] = useState(false);
 
@@ -129,7 +133,21 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {/* Prose answer */}
         {message.content && (
           <div className="text-sm leading-relaxed whitespace-pre-wrap">
-            {message.content}
+            <ReactMarkdown
+              components={{
+                h1: ({node, ...props}) => <h1 className="text-lg font-bold mt-4 mb-2" {...props} />,
+                h2: ({node, ...props}) => <h2 className="text-base font-bold mt-4 mb-2" {...props} />,
+                h3: ({node, ...props}) => <h3 className="text-sm font-semibold mt-4 mb-2" {...props} />,
+                p: ({node, ...props}) => <p className="mb-3 last:mb-0" {...props} />,
+                ul: ({node, ...props}) => <ul className="list-disc pl-5 mb-3" {...props} />,
+                ol: ({node, ...props}) => <ol className="list-decimal pl-5 mb-3" {...props} />,
+                li: ({node, ...props}) => <li className="mb-1" {...props} />,
+                strong: ({node, ...props}) => <strong className="font-semibold text-text-primary" {...props} />,
+                em: ({node, ...props}) => <em className="italic" {...props} />,
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
           </div>
         )}
 
@@ -137,7 +155,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {contentBlocks.length > 0 && (
           <div className="mt-3 space-y-3">
             {contentBlocks.map((block, i) => (
-              <BlockRenderer key={i} block={block} />
+              <BlockRenderer key={i} block={block} isLatestStockOverview={isLatestStockOverview} />
             ))}
           </div>
         )}

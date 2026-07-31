@@ -46,16 +46,44 @@ export function MessageList({ messages }: MessageListProps) {
               [ {suggestion} ]
             </button>
           ))}
+          <button
+            className="font-mono text-xs px-4 py-3 rounded bg-accent/10 border border-accent/20
+                       text-accent font-semibold hover:bg-accent/20 transition-colors text-center shadow-sm mt-2"
+            onClick={() => {
+              const event = new CustomEvent("market-brief-click");
+              window.dispatchEvent(event);
+            }}
+          >
+            [ View Market Brief ]
+          </button>
         </div>
       </div>
     );
   }
 
+  // Find the last assistant message that contains a StockOverview block.
+  // Only that message's StockOverview gets a live WebSocket connection.
+  const lastStockOverviewMsgId = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === "assistant" && msg.uiBlocks.some(
+        (b: any) => b && typeof b === "object" && "component" in b && b.component === "StockOverview"
+      )) {
+        return msg.id;
+      }
+    }
+    return null;
+  })();
+
   return (
     <div className="flex-1 overflow-y-auto px-4 py-8" id="message-list">
       <div className="max-w-3xl mx-auto space-y-8">
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isLatestStockOverview={msg.id === lastStockOverviewMsgId}
+          />
         ))}
         <div ref={bottomRef} />
       </div>

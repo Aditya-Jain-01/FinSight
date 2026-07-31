@@ -1,14 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { FilingExcerptProps } from "./schemas";
 
 export function FilingExcerpt({
   documentTitle,
-  sectionTitle,
-  content,
   ticker,
   source,
-  relevanceScore,
+  excerpts,
 }: FilingExcerptProps) {
   return (
     <div className="bg-panel border border-border rounded-lg p-5 animate-slide-up my-4 shadow-sm relative">
@@ -27,16 +26,10 @@ export function FilingExcerpt({
             <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-accent-muted text-accent">
               {source === "seed" ? "Annual Report" : "Uploaded"}
             </span>
-            {relevanceScore !== undefined && (
-              <span className="text-[10px] text-text-muted font-mono bg-page px-1.5 py-0.5 rounded">
-                {(relevanceScore * 100).toFixed(0)}% match
-              </span>
-            )}
           </div>
           <h4 className="text-sm font-semibold text-text-primary leading-tight">
             {documentTitle}
           </h4>
-          <p className="text-xs text-text-secondary mt-1">{sectionTitle}</p>
         </div>
 
         {/* Citation icon */}
@@ -48,12 +41,43 @@ export function FilingExcerpt({
         </div>
       </div>
 
-      {/* Excerpt content */}
-      <div className="pl-2 ledger-rule mt-2">
-        <blockquote className="text-sm text-text-primary leading-relaxed">
-          <span className="footnote-mark mr-1">¹</span>
-          {content}
+      {/* Excerpts List */}
+      <div className="mt-4 space-y-4">
+        {(excerpts || []).map((excerpt, idx) => (
+          <ExcerptItem key={idx} excerpt={excerpt} index={idx + 1} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExcerptItem({ excerpt, index }: { excerpt: any; index: number }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const isLong = excerpt.content.length > 200;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs text-text-secondary">{excerpt.sectionTitle}</p>
+        {excerpt.relevanceScore !== undefined && (
+          <span className="text-[10px] text-text-muted font-mono">
+            {(excerpt.relevanceScore * 100).toFixed(0)}% match
+          </span>
+        )}
+      </div>
+      <div className="pl-2 ledger-rule">
+        <blockquote className={`text-sm text-text-primary leading-relaxed ${isExpanded ? '' : 'line-clamp-3'}`}>
+          <span className="footnote-mark mr-1">{index}</span>
+          {excerpt.content}
         </blockquote>
+        {isLong && (
+          <button 
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-xs mt-1 text-accent hover:underline cursor-pointer bg-transparent border-none p-0"
+          >
+            {isExpanded ? "Show less" : "Show full excerpt"}
+          </button>
+        )}
       </div>
     </div>
   );

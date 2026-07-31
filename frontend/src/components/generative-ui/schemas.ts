@@ -6,6 +6,59 @@ import { z } from "zod";
  * The LLM never writes this JSON — _build_ui_blocks in responder.py does.
  */
 
+// ─── Active schemas (emitted by current backend) ────────────────────
+
+export const StockOverviewSchema = z.object({
+  component: z.literal("StockOverview"),
+  props: z.object({
+    ticker: z.string(),
+    companyName: z.string().optional(),
+    currency: z.enum(["INR", "USD"]),
+    price: z.object({
+      current: z.number(),
+      change: z.number(),
+      changePercent: z.number(),
+      asOf: z.string(),
+      history: z.array(z.object({ date: z.string(), close: z.number() })),
+    }).optional(),
+    metrics: z.array(z.object({
+      label: z.string(),
+      value: z.number().nullable(),
+      format: z.enum(["number", "currency", "percent", "compact"]),
+    })).optional(),
+    news: z.array(z.object({
+      title: z.string(),
+      publisher: z.string().optional(),
+      link: z.string().optional(),
+    })).optional(),
+    filingExcerpt: z.object({
+      documentTitle: z.string(),
+      sectionTitle: z.string(),
+      content: z.string(),
+      source: z.string(),
+    }).optional(),
+    sources: z.array(z.string()),
+  }),
+});
+
+export const AgentTraceSchema = z.object({
+  component: z.literal("AgentTrace"),
+  props: z.object({
+    toolCalls: z.array(
+      z.object({
+        tool: z.string(),
+        args: z.record(z.unknown()),
+        latency_ms: z.number(),
+        raw_result: z.unknown(),
+        error: z.string().nullable().optional(),
+      })
+    ),
+    totalLatencyMs: z.number(),
+  }),
+});
+
+// ─── Legacy schemas (kept for backward compat with old persisted messages) ──
+
 export const PriceChartSchema = z.object({
   component: z.literal("PriceChart"),
   props: z.object({
@@ -36,43 +89,44 @@ export const MetricCardSchema = z.object({
   }),
 });
 
-export const AgentTraceSchema = z.object({
-  component: z.literal("AgentTrace"),
-  props: z.object({
-    toolCalls: z.array(
-      z.object({
-        tool: z.string(),
-        args: z.record(z.unknown()),
-        latency_ms: z.number(),
-        raw_result: z.unknown(),
-        error: z.string().nullable().optional(),
-      })
-    ),
-    totalLatencyMs: z.number(),
-  }),
-});
-
 export const FilingExcerptSchema = z.object({
   component: z.literal("FilingExcerpt"),
   props: z.object({
     documentTitle: z.string(),
-    sectionTitle: z.string(),
-    content: z.string(),
-    ticker: z.string().optional(),
+    ticker: z.string().nullish(),
     source: z.string(),
-    relevanceScore: z.number().optional(),
+    excerpts: z.array(
+      z.object({
+        sectionTitle: z.string(),
+        content: z.string(),
+        relevanceScore: z.number().optional(),
+      })
+    ),
   }),
 });
 
+export const MarketBriefSchema = z.object({
+  component: z.literal("MarketBrief"),
+  props: z.record(z.unknown()).optional(),
+});
+
+// ─── Union (all component types the frontend can render) ────────────
+
 export const UIBlockSchema = z.discriminatedUnion("component", [
+  StockOverviewSchema,
+  AgentTraceSchema,
   PriceChartSchema,
   MetricCardSchema,
-  AgentTraceSchema,
   FilingExcerptSchema,
+  MarketBriefSchema,
 ]);
 
+// ─── Type exports ───────────────────────────────────────────────────
+
+export type StockOverviewProps = z.infer<typeof StockOverviewSchema>["props"];
+export type AgentTraceProps = z.infer<typeof AgentTraceSchema>["props"];
 export type PriceChartProps = z.infer<typeof PriceChartSchema>["props"];
 export type MetricCardProps = z.infer<typeof MetricCardSchema>["props"];
-export type AgentTraceProps = z.infer<typeof AgentTraceSchema>["props"];
 export type FilingExcerptProps = z.infer<typeof FilingExcerptSchema>["props"];
+export type MarketBriefProps = z.infer<typeof MarketBriefSchema>["props"];
 export type UIBlock = z.infer<typeof UIBlockSchema>;
