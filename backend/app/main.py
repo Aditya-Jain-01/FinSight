@@ -14,13 +14,7 @@ from app.services.price_bus import start_finnhub, stop_finnhub
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with AsyncPostgresSaver.from_conn_string(settings.database_url) as checkpointer:
-        import subprocess
-        from pathlib import Path
-        
-        backend_dir = Path(__file__).parent.parent
-        print("Running database migrations...")
-        # Run alembic relative to the backend directory, so it works on Render
-        subprocess.run(["alembic", "upgrade", "head"], cwd=str(backend_dir), shell=True)
+
         
         await checkpointer.setup()  # creates checkpoint tables on first run, no-op after
         app.state.graph = build_graph(checkpointer)
