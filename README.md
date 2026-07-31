@@ -27,9 +27,8 @@ FinSight is an agentic financial research assistant designed to answer natural-l
 
 ## Demo
 
-> *Note: Add your Vercel URL and Render API URL here.*
-> 🔗 **Live Demo:** [Vercel Deployment](#)
-> 🔗 **API Health Check:** [Render Endpoint](#)
+> 🔗 **Live Demo:** [https://finsight-mauve-eight.vercel.app/](https://finsight-mauve-eight.vercel.app/)
+> 🔗 **API Health Check:** [https://finsight-cxdi.onrender.com/api/v1/health](https://finsight-cxdi.onrender.com/api/v1/health)
 
 ---
 
